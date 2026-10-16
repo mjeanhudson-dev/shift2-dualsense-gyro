@@ -24,6 +24,16 @@ if errorlevel 1 goto failed
 echo.
 echo Built xinput1_3.dll
 
+if exist xinput_proxy_pressure_test.cpp (
+    "%GPP%" -std=c++17 -O2 -Wall -Wno-cast-function-type -static -static-libgcc -static-libstdc++ -s -o xinput_proxy_pressure_test.exe xinput_proxy_pressure_test.cpp -lsetupapi
+    if not errorlevel 1 echo Built xinput_proxy_pressure_test.exe
+)
+
+if exist gyro_workshop.cpp (
+    "%GPP%" -std=c++17 -O2 -Wall -Wextra -static -static-libgcc -static-libstdc++ -s -o gyro_workshop.exe gyro_workshop.cpp -lsetupapi
+    if not errorlevel 1 echo Built gyro_workshop.exe
+)
+
 set "DEST=%~1"
 if not defined DEST goto manual
 if exist "%DEST%\" (set "DEST=%DEST%\") else for %%f in ("%DEST%") do set "DEST=%%~dpf"
@@ -33,6 +43,8 @@ set "NAME=%~2"
 if not defined NAME set "NAME=xinput1_3"
 copy /y xinput1_3.dll "%DEST%%NAME%.dll" >nul
 if errorlevel 1 goto copyfail
+if exist xinput_proxy_pressure_test.exe copy /y xinput_proxy_pressure_test.exe "%DEST%" >nul
+if exist gyro_workshop.exe copy /y gyro_workshop.exe "%DEST%" >nul
 if exist "%DEST%shift2_dualsense.ini" goto keepini
 copy shift2_dualsense.ini "%DEST%" >nul
 goto inidone

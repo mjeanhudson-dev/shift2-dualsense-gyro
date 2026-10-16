@@ -22,9 +22,10 @@
 //             ABS flash > flick flash > redline shift-light strobe > virtual-tach gradient or base RGB.
 //   Virtual tach  an ESTIMATED engine model from your throttle, brake, clutch and shifts (not game data).
 //   Handling  input-side shaping only (the game's car model runs inside the game): steering dead zone /
-//             saturation / curve, asymmetric natural steering dampening, optional lead compensation, and
-//             friction-circle throttle limit. Output writes to the pad are asynchronous and a precise
-//             clock is used, so the proxy adds no waits to the game thread.
+//             saturation / curve, direct 1:1 motion steering (Smoothing=100 bypasses proxy dampening
+//             to use Shift 2's native controller dampening), Lead=0 stock feel, and friction-circle
+//             throttle limit. Output writes to the pad are asynchronous and a precise clock is used,
+//             so the proxy adds no waits to the game thread.
 //   Indicators  player LEDs show steering position while motion steering is on; the Mic LED shows
 //             when motion steering is active.
 //
@@ -67,6 +68,8 @@ enum {
 struct Config {
     // [Motion]
     int motionStart, motionMode, motionInvert, motionMax, motionDead, motionExpo, motionSmooth;
+    int oneEuroMinCutoff, oneEuroBeta;
+    float gyroBiasX, gyroBiasY, gyroBiasZ;
     // [Triggers]
     int trig, brakeZone, brakeStrength, brakeEnd, throttleZone, throttleStrength, throttleEnd;
     int rumbleToTrig, rumbleThresh, brakeFreq, throttleFreq, throttleVibeMax;
@@ -111,17 +114,19 @@ static Config DefaultConfig()
 {
     Config c = {};
     c.motionStart = 1;  c.motionMode = 0;  c.motionInvert = 0;
-    c.motionMax = 35;   c.motionDead = 2;  c.motionExpo = 115;  c.motionSmooth = 75;
+    c.motionMax = 28;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 100;
+    c.oneEuroMinCutoff = 120; c.oneEuroBeta = 40;
+    c.gyroBiasX = 0.0f; c.gyroBiasY = 0.0f; c.gyroBiasZ = 0.0f;
     c.trig = 1;
     c.brakeZone = 2;    c.brakeStrength = 3;     c.brakeEnd = 7;
     c.throttleZone = 0; c.throttleStrength = 1;  c.throttleEnd = 1;
-    c.rumbleToTrig = 1; c.rumbleThresh = 40;     c.brakeFreq = 30;  c.throttleFreq = 40;  c.throttleVibeMax = 0;
+    c.rumbleToTrig = 1; c.rumbleThresh = 40;     c.brakeFreq = 30;  c.throttleFreq = 40;  c.throttleVibeMax = 5;
     c.absEnable = 1;    c.absThresh = 215;       c.absHyst = 20;    c.absFreq = 40;  c.absStrength = 8;
     c.grip = 1;         c.gripBoost = 3;
     c.kickShift = 1;    c.kickAbs = 1;           c.kickPower = 180; c.kickMs = 70;   c.lockKick = 0;  c.lockPower = 130;
     c.crashEnable = 1;  c.crashThresh = 200;     c.crashJump = 120; c.crashMs = 600; c.crashFreq = 50;
     c.tach = 1;         c.redline = 93;          c.autoShift = 0;   c.inverseShift = 0;
-    c.limiter = 0;      c.limiterZone = 8;       c.limiterStrength = 3;  c.limiterFreq = 25;
+    c.limiter = 1;      c.limiterZone = 8;       c.limiterStrength = 3;  c.limiterFreq = 25;
     c.flick = 1;        c.flickThresh = 340;     c.flickMs = 90;    c.flickLock = 400;   c.flickBtn = -1;
     c.glance = 1;       c.glanceStrength = 100;  c.glanceDead = 12;
     c.light = 1;        c.telemetry = 0;         c.strobe = 1;      c.strobeHz = 10;
@@ -132,7 +137,7 @@ static Config DefaultConfig()
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
     c.l3Handbrake = 1;  c.psBtn = 1;
-    c.steerVibe = 1;    c.steerVibeMax = 60;     c.steerVibeDead = 5;  c.steerVibeCurve = 100;  c.steerVibeDir = 1;
+    c.steerVibe = 1;    c.steerVibeMax = 25;     c.steerVibeDead = 10; c.steerVibeCurve = 100;  c.steerVibeDir = 1;
     c.menuButtonVibe = 1;       c.menuButtonPower = 55;     c.menuButtonMs = 25;
     c.menuTriggerMode = 1;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;
     c.threadBoost = 1;
@@ -165,7 +170,17 @@ static void LoadConfig()
     cfg.motionMax    = Clamp(RD("Motion", "MaxAngle",  cfg.motionMax), 5, 180);
     cfg.motionDead   = Clamp(RD("Motion", "Deadzone",  cfg.motionDead), 0, 20);
     cfg.motionExpo   = Clamp(RD("Motion", "Curve",     cfg.motionExpo), 10, 400);
-    cfg.motionSmooth = Clamp(RD("Motion", "Smoothing", cfg.motionSmooth), 1, 100);
+    cfg.motionSmooth = Clamp(RD("Motion", "Smoothing", cfg.motionSmooth), 0, 100);
+    cfg.oneEuroMinCutoff = Clamp(RD("Motion", "OneEuroMinCutoff", cfg.oneEuroMinCutoff), 0, 1000);
+    cfg.oneEuroBeta      = Clamp(RD("Motion", "OneEuroBeta",      cfg.oneEuroBeta), 0, 1000);
+
+    wchar_t bBuf[64];
+    if (GetPrivateProfileStringW(L"Motion", L"GyroBiasX", L"", bBuf, 64, p) > 0) cfg.gyroBiasX = (float)_wtof(bBuf);
+    if (GetPrivateProfileStringW(L"Motion", L"GyroBiasY", L"", bBuf, 64, p) > 0) cfg.gyroBiasY = (float)_wtof(bBuf);
+    if (GetPrivateProfileStringW(L"Motion", L"GyroBiasZ", L"", bBuf, 64, p) > 0) cfg.gyroBiasZ = (float)_wtof(bBuf);
+    cfg.gyroBiasX = fmaxf(-500.0f, fminf(500.0f, cfg.gyroBiasX));
+    cfg.gyroBiasY = fmaxf(-500.0f, fminf(500.0f, cfg.gyroBiasY));
+    cfg.gyroBiasZ = fmaxf(-500.0f, fminf(500.0f, cfg.gyroBiasZ));
 
     cfg.trig             = RD("Triggers", "Enabled", cfg.trig);
     cfg.brakeZone        = Clamp(RD("Triggers", "BrakeZone",        cfg.brakeZone), 0, 9);
@@ -409,11 +424,14 @@ static volatile LONG     g_raceActive = 0;           // 1 when actively driving/
 static volatile LONG     g_crash = 0;                // crash shock active (set by the game thread)
 static volatile DWORD    g_crashUntil = 0;
 static volatile LONG     g_getStateCalls = 0;        // game's XInputGetState(0) calls since the last status line
+static volatile DWORD    g_lastGetStateMs = 0;       // timestamp of last XInputGetState call
+static volatile LONG     g_gridEntryPending = 0;     // set by game thread when track load gap > 2500ms
 
 // Everything below is only touched with g_cs held.
 static XGamepad          g_pad;
 static DWORD             g_packet = 0;
 static BYTE              g_rumbleL = 0, g_rumbleR = 0;   // the game's own rumble request
+static volatile DWORD    g_lastRumbleMs = 0;
 static bool              g_lightSetupDone = false;
 static bool              g_absOn = false;                // ABS judder currently active
 static bool              g_buzz = false;                 // limiter buzz currently active
@@ -700,11 +718,16 @@ static void FlushOutput(bool reset)
             }
             // R2 vibration (limiter buzz, game rumble) is gated by ThrottleVibeMax:
             // When ThrottleVibeMax == 0, R2 NEVER switches to pulsing/vibrating mode; it stays in pure, smooth constant resistance.
-            if (cfg.throttleVibeMax > 0) {
+            if (cfg.throttleVibeMax > 0 && inRace) {
+                uint8_t thr = g_pad.bRightTrigger;
+                int rRumble = g_rumbleR > 0 ? g_rumbleR : ((thr > 25 && g_rumbleL > 0) ? g_rumbleL : 0);
                 if (cfg.limiter && g_buzz) {          // limiter buzz: the throttle chatters at redline
                     rKind = 2; rZone = cfg.limiterZone; rLevel = Clamp(cfg.limiterStrength, 1, cfg.throttleVibeMax); rEnd = 0; rFreq = cfg.limiterFreq;
-                } else if (cfg.rumbleToTrig && g_rumbleR > 0 && g_rumbleR >= cfg.rumbleThresh) {
-                    rKind = 2; rLevel = 1 + (g_rumbleR * (cfg.throttleVibeMax - 1)) / 255; rEnd = 0; rFreq = cfg.throttleFreq;
+                } else if (cfg.rumbleToTrig && rRumble > 0 && rRumble >= cfg.rumbleThresh) {
+                    rKind = 2; rZone = Clamp(cfg.throttleZone, 0, 9);
+                    rLevel = 1 + (rRumble * (cfg.throttleVibeMax - 1)) / 255;
+                    rLevel = Clamp(rLevel, 1, cfg.throttleVibeMax);
+                    rEnd = 0; rFreq = cfg.throttleFreq;
                 }
             }
             if (crash) {                              // crash shock: both triggers slam over their whole travel
@@ -760,6 +783,7 @@ static void SetRumble(BYTE l, BYTE r)
         if (l || r) {
             LOG_ONCE("game sent rumble to XInput pad 0 (L=%d R=%d)", (int)l, (int)r);
             ATOMIC_STORE(g_raceActive, 1);
+            ATOMIC_STORE(g_lastRumbleMs, NowMs());
         }
         if (cfg.crashEnable) {
             int prev = g_rumbleL > g_rumbleR ? g_rumbleL : g_rumbleR;
@@ -792,22 +816,95 @@ static float Wrap(float a)
     return a;
 }
 
+// Casiez et al. 1€ Filter (One Euro Filter) with direct rate-gyro support
+struct OneEuroFilter {
+    float minCutoff; // Minimum cutoff frequency in Hz (clamps resting tremor on straights)
+    float beta;      // Speed coefficient (eliminates phase lag on fast turns)
+    float dCutoff;   // Derivative cutoff frequency in Hz
+    float xFilt;
+    float dxFilt;
+    bool initialized;
+
+    OneEuroFilter(float mc = 1.20f, float b = 0.040f, float dc = 1.0f)
+        : minCutoff(mc), beta(b), dCutoff(dc), xFilt(0.0f), dxFilt(0.0f), initialized(false) {}
+
+    void Reset(float initVal = 0.0f) {
+        xFilt = initVal;
+        dxFilt = 0.0f;
+        initialized = true;
+    }
+
+    static float CalcAlpha(float cutoff, float dt) {
+        if (cutoff <= 0.0f || dt <= 0.0f) return 1.0f;
+        float tau = 1.0f / (6.2831853f * cutoff);
+        return dt / (tau + dt);
+    }
+
+    // Direct mode: uses physically measured angular velocity directly (zero derivative lag)
+    float FilterWithRate(float val, float rateDps, float dt, float customMinCutoff = -1.0f, float customBeta = -1.0f) {
+        float mc = (customMinCutoff >= 0.0f) ? customMinCutoff : minCutoff;
+        float b  = (customBeta >= 0.0f) ? customBeta : beta;
+        if (!initialized || dt <= 0.0f) {
+            xFilt = val;
+            dxFilt = rateDps;
+            initialized = true;
+            return val;
+        }
+        dxFilt = rateDps;
+        float cutoff = mc + b * fabsf(rateDps);
+        float aX = CalcAlpha(cutoff, dt);
+        xFilt += Wrap(val - xFilt) * aX;
+        xFilt = Wrap(xFilt);
+        return xFilt;
+    }
+
+    // Standard mode: uses numerical differentiation per Casiez et al. / Roussel reference
+    float Filter(float val, float dt) {
+        if (!initialized || dt <= 0.0f) {
+            xFilt = val;
+            dxFilt = 0.0f;
+            initialized = true;
+            return val;
+        }
+        float dRaw = Wrap(val - xFilt) / dt;
+        float aD = CalcAlpha(dCutoff, dt);
+        dxFilt += (dRaw - dxFilt) * aD;
+
+        float cutoff = minCutoff + beta * fabsf(dxFilt);
+        float aX = CalcAlpha(cutoff, dt);
+        xFilt += Wrap(val - xFilt) * aX;
+        xFilt = Wrap(xFilt);
+        return xFilt;
+    }
+
+    float GetCurrentCutoff(float rateDps, float customMinCutoff = -1.0f, float customBeta = -1.0f) const {
+        float mc = (customMinCutoff >= 0.0f) ? customMinCutoff : minCutoff;
+        float b  = (customBeta >= 0.0f) ? customBeta : beta;
+        return mc + b * fabsf(rateDps);
+    }
+};
+
 static struct {
     bool have, prevPS, prevMic, absOn, leanOn, lockHeld, prevCrash, bootActive, leadInit, glanceLatch;
     bool inRaceState, prevInRace, prevMenuL2, prevMenuR2;
+    bool gridInitPending, rVibeActive;
+    int gridStableCount, lastRLevel;
+    DWORD gridEntryStart;
     bool touchActive;
     BYTE touchId;
     int touchStartX, touchStartY;
     DWORD touchStartMs;
     int touchGlanceDir;
+    int touchGlanceDirY;
     DWORD touchGlanceHoldUntil;
     WORD prevShiftBtns, prevMenuBtns;
-    float angle, center, pitch, pitchCenter, rpm, lp;
+    float angle, cleanAngle, center, pitch, pitchCenter, rpm, lp;
     float filtAx, filtAy, filtAz;
     float gyroBiasX, gyroBiasY, gyroBiasZ, gyroRollRate, steerOutput;
     int gyroBiasSamples, gear;
+    OneEuroFilter oneEuro;
     DWORD motionLast, tachLast, limiterSince, flickUntil, flickLockUntil, bootStart, leadLast, statusLast, recenterFlash;
-    DWORD lastRaceActivity, lastSteerFlush;
+    DWORD lastRaceActivity, lastSteerFlush, lastRumble;
 } M;                                                  // owned by the reader thread
 
 static const float kMinGravity = 1638.0f;             // 20% of 1 g (8192 LSB); below this roll is ill-defined
@@ -832,8 +929,8 @@ static bool Tilt(float ax, float ay, float az, float* roll, float* pitch)
         M.filtAz += (az - M.filtAz) * alpha;
     }
 
-    float up = (cfg.motionMode == 0) ? M.filtAy : M.filtAz;
-    float other = (cfg.motionMode == 0) ? M.filtAz : M.filtAy;
+    float up = (cfg.motionMode != 1) ? M.filtAy : M.filtAz;
+    float other = (cfg.motionMode != 1) ? M.filtAz : M.filtAy;
     float gyz = sqrtf(M.filtAy * M.filtAy + M.filtAz * M.filtAz);
     float plane = sqrtf(M.filtAx * M.filtAx + gyz * gyz);
     *pitch = atan2f(other, sqrtf(M.filtAx * M.filtAx + up * up)) * 57.29578f;
@@ -844,9 +941,10 @@ static bool Tilt(float ax, float ay, float az, float* roll, float* pitch)
     return true;
 }
 
-static int Steer()
+static int Steer(float inputAngle = -999.0f)
 {
-    float rel = Wrap(M.angle - M.center);
+    float angleToUse = (inputAngle > -900.0f) ? inputAngle : M.angle;
+    float rel = Wrap(angleToUse - M.center);
     float a = fabsf(rel);
     float dz = (float)cfg.motionDead;
     float mx = (float)cfg.motionMax;
@@ -857,7 +955,8 @@ static int Steer()
     n = powf(n, cfg.motionExpo / 100.0f);
     if (cfg.handling && cfg.gameDead > 0) {
         float g = cfg.gameDead / 100.0f;
-        n = g + (1.0f - g) * n;
+        float blend = (n < 0.25f) ? (n / 0.25f) : 1.0f;
+        n = (g * blend) + (1.0f - g * blend) * n;
     }
     return (int)lroundf((rel < 0 ? -n : n) * 32767.0f);
 }
@@ -868,7 +967,8 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
     if (dt > 0.05f) dt = 0.05f;
     float predicted = Wrap(M.angle + gyroRollDps * dt);
     if (accelTrusted && dt > 0.0f) {
-        float tau = (fabsf(gyroRollDps) > 60.0f) ? 0.35f : 0.22f;
+        bool vibrating = (g_steerVibeL > 0 || g_steerVibeR > 0 || g_kickOn || g_rumbleL > 0 || g_rumbleR > 0);
+        float tau = vibrating ? 0.85f : ((fabsf(gyroRollDps) > 60.0f) ? 0.35f : 0.22f);
         float correction = dt / (tau + dt);
         predicted = Wrap(predicted + Wrap(accelRoll - predicted) * correction);
     }
@@ -876,23 +976,42 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
 }
 
 // Natural steering dampening (modeled on Shift 2's CentreToLock / LockToCentre / OppositeLockToCentre
-// rise and fall damping) so holding and turning the controller like a steering wheel feels weighted,
-// stable, and progressive without mid-air hand jitter.
+// rise and fall damping). When Smoothing=50 (default), dampening is active with responsive asymmetric weighted rack.
+// When Smoothing=100 or 0, dampening is completely bypassed for immediate, direct 1:1 steering without proxy latency.
 static int SmoothSteer(int target, float dt)
 {
+    if (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) {
+        M.steerOutput = (float)target;
+        return target;
+    }
     if (dt <= 0.0f) return (int)lroundf(M.steerOutput);
     float cur = M.steerOutput;
     float tgt = (float)target;
-    float baseTau = 0.008f + (100.0f - (float)cfg.motionSmooth) * 0.0012f;
-    if (baseTau < 0.004f) baseTau = 0.004f;
+
+    // Map Smoothing (1-99) into base time constant tau (default 50 -> 0.090s = 90ms).
+    // Provides natural steering rack inertia and weight, completely filtering mid-air hand tremors.
+    float baseTau = 0.015f + (float)cfg.motionSmooth * 0.0015f;
+    if (baseTau < 0.006f) baseTau = 0.006f;
+
     float tau = baseTau;
     if (cur * tgt < 0.0f) {
-        tau = baseTau * 0.55f;  // OppositeLockToCentre: counter-steering across center is fastest
+        tau = baseTau * 0.45f;  // OppositeLockToCentre: counter-steering across center is fast and responsive
     } else if (fabsf(tgt) < fabsf(cur)) {
-        tau = baseTau * 0.65f;  // LockToCentre: unwinding back toward center is crisp
+        tau = baseTau * 0.70f;  // LockToCentre: unwinding back toward center is crisp
     } else {
-        tau = baseTau * 1.15f;  // CentreToLock: natural rise dampening into corners
+        tau = baseTau * 1.20f;  // CentreToLock: natural progressive rise dampening into corners
     }
+
+    // Slew velocity compression for extreme sudden slides/oversteer catches:
+    // Only engage when moving across more than half-lock (>16000 units), preserving full smooth rack weight
+    // during normal cornering, and keeping a firm 0.65 floor so steering never twitches or snaps.
+    float diff = fabsf(tgt - cur);
+    if (diff > 16000.0f) {
+        float comp = 16000.0f / diff;
+        if (comp < 0.65f) comp = 0.65f;
+        tau *= comp;
+    }
+
     float alpha = dt / (tau + dt);
     if (alpha > 1.0f) alpha = 1.0f;
     M.steerOutput += (tgt - cur) * alpha;
@@ -904,6 +1023,7 @@ static int SmoothSteer(int target, float dt)
 static int Lean()
 {
     float rel = Wrap(M.pitch - M.pitchCenter);
+    if (cfg.leanInvert) rel = -rel;
     float a = fabsf(rel);
     float dz = (float)cfg.leanDead;
     float mx = (float)cfg.leanMax;
@@ -914,18 +1034,33 @@ static int Lean()
     return (int)lroundf((rel < 0 ? -n : n) * 32767.0f * (cfg.leanStrength / 100.0f));
 }
 
-// Touchpad flick / swipe for camera glance:
-// Swiping horizontally left or right snaps the camera look (right-stick X) to check mirrors/blind spots,
-// returning on release or after a natural hold period.
-static int ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now, int* clickTapL, int* clickTapR, int* clickTapMs)
+// Touchpad flick / swipe for camera look (Right Stick rx/ry corner glance):
+// Swiping horizontally left or right looks into side mirrors / apex.
+// Swiping diagonally (up-left / up-right) angles camera directly into the corner apex (rx + ry).
+// Swiping down glances behind (look back / rearview mirror).
+// Returns smoothly to center upon release or after natural hold period.
+static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now,
+                               int* outRx, int* outRy,
+                               int* clickTapL, int* clickTapR, int* clickTapMs)
 {
-    if (!cfg.glance) return 0;
+    if (outRx) *outRx = 0;
+    if (outRy) *outRy = 0;
+    if (!cfg.glance) return;
+
     if (!touching) {
         M.touchActive = false;
-        if ((int32_t)(now - M.touchGlanceHoldUntil) >= 0) {
+        int32_t remaining = (int32_t)(M.touchGlanceHoldUntil - now);
+        if (remaining <= 0) {
             M.touchGlanceDir = 0;
+            M.touchGlanceDirY = 0;
+            return;
         }
-        return M.touchGlanceDir != 0 ? (int)(M.touchGlanceDir * 32767.0f * (cfg.glanceStrength / 100.0f)) : 0;
+        // Smooth return to center during final 120ms of release
+        float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
+        float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
+        if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+        if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+        return;
     }
 
     if (!M.touchActive || M.touchId != id) {
@@ -934,69 +1069,138 @@ static int ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now,
         M.touchStartX = tx;
         M.touchStartY = ty;
         M.touchStartMs = now;
-        if ((int32_t)(now - M.touchGlanceHoldUntil) >= 0) {
+        // If a new touch starts while a previous glance had already expired, reset immediately
+        int32_t remaining = (int32_t)(M.touchGlanceHoldUntil - now);
+        if (remaining <= 0) {
             M.touchGlanceDir = 0;
+            M.touchGlanceDirY = 0;
+        } else {
+            float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
+            float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
+            if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+            if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
         }
-        return M.touchGlanceDir != 0 ? (int)(M.touchGlanceDir * 32767.0f * (cfg.glanceStrength / 100.0f)) : 0;
+        return;
     }
 
     int dx = tx - M.touchStartX;
     int dy = ty - M.touchStartY;
+    int vertDisp = -dy; // positive = UP (towards top of controller), negative = DOWN
     DWORD elapsed = now - M.touchStartMs;
     int swipeThresh = Clamp(cfg.glanceDead > 0 ? cfg.glanceDead * 10 : 120, 40, 400);
     int holdThresh  = swipeThresh * 2 / 3;
 
-    // Detect swipe/flick gesture: horizontal travel exceeds swipeThresh pixels
-    if (M.touchGlanceDir == 0) {
+    // Detect swipe/flick gesture or reversal/transition:
+    bool flickTriggered = false;
+    if (M.touchGlanceDir == 0 && M.touchGlanceDirY == 0) {
         if (elapsed <= 600) {
             if (dx < -swipeThresh && fabsf((float)dx) > fabsf((float)dy) * 0.7f) {
                 M.touchGlanceDir = -1; // Snap look left
-                M.touchGlanceHoldUntil = now + 450; // Hold glance for at least 450ms
-                if (clickTapL) *clickTapL = 90;
-                if (clickTapR) *clickTapR = 90;
-                if (clickTapMs) *clickTapMs = 30;
-                Log("touchpad flick: glance LEFT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
+                if (vertDisp > (swipeThresh / 2)) {
+                    M.touchGlanceDirY = 1; // Apex look up-left
+                    Log("touchpad flick: glance APEX-LEFT (dx=%d, dy=%d, elapsed=%lums)", dx, dy, (unsigned long)elapsed);
+                } else {
+                    M.touchGlanceDirY = 0;
+                    Log("touchpad flick: glance LEFT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
+                }
+                flickTriggered = true;
             } else if (dx > swipeThresh && (float)dx > fabsf((float)dy) * 0.7f) {
                 M.touchGlanceDir = +1; // Snap look right
-                M.touchGlanceHoldUntil = now + 450;
+                if (vertDisp > (swipeThresh / 2)) {
+                    M.touchGlanceDirY = 1; // Apex look up-right
+                    Log("touchpad flick: glance APEX-RIGHT (dx=%d, dy=%d, elapsed=%lums)", dx, dy, (unsigned long)elapsed);
+                } else {
+                    M.touchGlanceDirY = 0;
+                    Log("touchpad flick: glance RIGHT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
+                }
+                flickTriggered = true;
+            } else if (vertDisp < -swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
+                // Swipe DOWN: rearview look back
+                M.touchGlanceDir = 0;
+                M.touchGlanceDirY = -1;
+                Log("touchpad flick: glance REARVIEW (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
+                flickTriggered = true;
+            } else if (vertDisp > swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
+                // Swipe UP: look up / high cockpit
+                M.touchGlanceDir = 0;
+                M.touchGlanceDirY = 1;
+                Log("touchpad flick: glance HIGH COCKPIT (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
+                flickTriggered = true;
+            }
+
+            if (flickTriggered) {
+                M.touchGlanceHoldUntil = now + 450; // Hold glance for at least 450ms
+                M.touchStartX = tx;
+                M.touchStartY = ty;
+                M.touchStartMs = now;
                 if (clickTapL) *clickTapL = 90;
                 if (clickTapR) *clickTapR = 90;
                 if (clickTapMs) *clickTapMs = 30;
-                Log("touchpad flick: glance RIGHT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
             }
         }
-        // If finger has rested or lingered without flicking, roll the starting point forward so subsequent flicks trigger cleanly
+        // If finger has rested or lingered without flicking, roll the starting point forward
         if (elapsed > 350 && fabsf((float)dx) < (float)holdThresh && fabsf((float)dy) < (float)holdThresh) {
             M.touchStartX = tx;
             M.touchStartY = ty;
             M.touchStartMs = now;
         }
     } else {
-        // While finger remains swiped to that side, refresh hold
-        if (M.touchGlanceDir == -1 && dx < -holdThresh) M.touchGlanceHoldUntil = now + 350;
-        if (M.touchGlanceDir == +1 && dx > holdThresh) M.touchGlanceHoldUntil = now + 350;
-
-        // Immediate reversal: if currently glancing one way and the user swipes hard in the other direction
-        if (M.touchGlanceDir == +1 && dx < -swipeThresh) {
+        // A glance is active: check for immediate reversal or direction change
+        if (M.touchGlanceDir != -1 && dx < -swipeThresh) {
             M.touchGlanceDir = -1;
+            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
             M.touchGlanceHoldUntil = now + 450;
             M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
             if (clickTapL) *clickTapL = 90;
             if (clickTapR) *clickTapR = 90;
             if (clickTapMs) *clickTapMs = 30;
             Log("touchpad flick: glance REVERSE to LEFT (dx=%d)", dx);
-        } else if (M.touchGlanceDir == -1 && dx > swipeThresh) {
+        } else if (M.touchGlanceDir != +1 && dx > swipeThresh) {
             M.touchGlanceDir = +1;
+            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
             M.touchGlanceHoldUntil = now + 450;
             M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
             if (clickTapL) *clickTapL = 90;
             if (clickTapR) *clickTapR = 90;
             if (clickTapMs) *clickTapMs = 30;
             Log("touchpad flick: glance REVERSE to RIGHT (dx=%d)", dx);
+        } else if (M.touchGlanceDirY != -1 && vertDisp < -swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
+            M.touchGlanceDir = 0;
+            M.touchGlanceDirY = -1;
+            M.touchGlanceHoldUntil = now + 450;
+            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
+            if (clickTapL) *clickTapL = 90;
+            if (clickTapR) *clickTapR = 90;
+            if (clickTapMs) *clickTapMs = 30;
+            Log("touchpad flick: glance REVERSE to REARVIEW (dy=%d)", dy);
+        } else if (M.touchGlanceDirY != 1 && vertDisp > swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
+            M.touchGlanceDir = 0;
+            M.touchGlanceDirY = 1;
+            M.touchGlanceHoldUntil = now + 450;
+            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
+            if (clickTapL) *clickTapL = 90;
+            if (clickTapR) *clickTapR = 90;
+            if (clickTapMs) *clickTapMs = 30;
+            Log("touchpad flick: glance REVERSE to HIGH COCKPIT (dy=%d)", dy);
         }
     }
 
-    return M.touchGlanceDir != 0 ? (int)(M.touchGlanceDir * 32767.0f * (cfg.glanceStrength / 100.0f)) : 0;
+    // Hold expiry and smooth recenter decay:
+    int32_t remaining = (int32_t)(M.touchGlanceHoldUntil - now);
+    if (remaining <= 0) {
+        M.touchGlanceDir = 0;
+        M.touchGlanceDirY = 0;
+        // Re-anchor resting finger so subsequent flicks start fresh without requiring finger lift
+        M.touchStartX = tx;
+        M.touchStartY = ty;
+        M.touchStartMs = now;
+        return;
+    }
+
+    float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
+    float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
+    if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+    if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
 }
 
 // Physical left-stick shaping for steering. Input dead zone, then the travel up to `Saturation` is
@@ -1092,6 +1296,10 @@ static void Parse(const uint8_t* b, DWORD n)
     const uint8_t* d = b + 1;
     // d[0..3] LX LY RX RY, d[4] L2, d[5] R2, d[7..9] buttons, d[15..20] gyro, d[21..26] accel, d[32..35] touch 1
     DWORD now = NowMs();
+    if (g_kickOn || g_steerVibeL > 0 || g_steerVibeR > 0 || g_rumbleL > 0 || g_rumbleR > 0) {
+        ATOMIC_STORE(g_lastRumbleMs, now);
+        M.lastRumble = now;
+    }
 
     // Active race driving detection:
     // Pedal engagement (throttle > 25, brake > 25) or game FFB rumble (> 0)
@@ -1185,12 +1393,13 @@ static void Parse(const uint8_t* b, DWORD n)
     float roll = 0.0f, pitch = 0.0f;
     bool rollOk = Tilt(ax, ay, az, &roll, &pitch);
     if (cfg.motionInvert) roll = -roll;
-    if (cfg.leanInvert) pitch = -pitch;
+    // Note: cfg.leanInvert is applied inside Lean() so physical M.pitch remains uncorrupted for 3D gyro projection
     bool firstMotionSample = !M.have;
     float accelMagnitude = sqrtf(M.filtAx * M.filtAx + M.filtAy * M.filtAy + M.filtAz * M.filtAz);
     float gyroPeak = fmaxf(fabsf(gyroX), fmaxf(fabsf(gyroY), fabsf(gyroZ)));
     if (M.gyroBiasSamples < 128 && gyroPeak < 4.0f &&
-        accelMagnitude > 0.75f * 8192.0f && accelMagnitude < 1.25f * 8192.0f) {
+        accelMagnitude > 0.75f * 8192.0f && accelMagnitude < 1.25f * 8192.0f &&
+        cfg.gyroBiasX == 0.0f && cfg.gyroBiasY == 0.0f && cfg.gyroBiasZ == 0.0f) {
         int samples = M.gyroBiasSamples + 1;
         M.gyroBiasX += (gyroX - M.gyroBiasX) / (float)samples;
         M.gyroBiasY += (gyroY - M.gyroBiasY) / (float)samples;
@@ -1200,34 +1409,106 @@ static void Parse(const uint8_t* b, DWORD n)
     float rateX = gyroX - M.gyroBiasX;
     float rateY = gyroY - M.gyroBiasY;
     float rateZ = gyroZ - M.gyroBiasZ;
-    float gyroRollDps = (cfg.motionMode == 0) ? -rateZ : -rateY;
+    float gyz = sqrtf(M.filtAy * M.filtAy + M.filtAz * M.filtAz);
+    if (gyz < 100.0f) gyz = 100.0f;
+    float invGyz = 1.0f / gyz;
+    float ny = M.filtAy * invGyz;
+    float nz = M.filtAz * invGyz;
+
+    // Line-of-sight sagittal roll rate (wheel turning upright/reclined, banking when flat):
+    float rollDps = -(rateZ * ny + rateY * nz);
+    // Direct face/turntable rotation rate (wheel turning upright, turntable plate turning when flat):
+    float turnDps = -rateZ;
+
+    float gyroRollDps = 0.0f;
+    if (cfg.motionMode == 0) {
+        // 1st-Party Player Space: Unified Turn & Lean Auto-Blend (Ken Perlin C2 Smootherstep)
+        float wRollSq = rollDps * rollDps;
+        float wTurnSq = turnDps * turnDps;
+        float wSumSq = wRollSq + wTurnSq;
+        if (wSumSq < 1e-4f) {
+            gyroRollDps = 0.5f * (rollDps + turnDps);
+        } else {
+            float u = wRollSq / wSumSq;
+            // Ken Perlin's C2 smootherstep: s(u) = u^3 * (u * (u * 6 - 15) + 10)
+            float s = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f);
+            gyroRollDps = s * rollDps + (1.0f - s) * turnDps;
+        }
+    } else if (cfg.motionMode == 1) {
+        gyroRollDps = -rateY; // Flat pad mode
+    } else {
+        gyroRollDps = rollDps; // Pure Sagittal wheel mode
+    }
     if (cfg.motionInvert) gyroRollDps = -gyroRollDps;
     M.gyroRollRate = gyroRollDps;
-    bool accelTrusted = rollOk && accelMagnitude > 0.65f * 8192.0f &&
-        accelMagnitude < 1.45f * 8192.0f && fabsf(gyroRollDps) < 180.0f;
+    bool accelTrusted = rollOk && accelMagnitude > 0.70f * 8192.0f &&
+        accelMagnitude < 1.35f * 8192.0f && fabsf(gyroRollDps) < 180.0f;
     float motionDt = M.motionLast ? (float)(DWORD)(now - M.motionLast) / 1000.0f : 0.0f;
     if (motionDt > 0.05f) motionDt = 0.05f;
     M.motionLast = now;
     if (firstMotionSample) {
+        if (cfg.gyroBiasX != 0.0f || cfg.gyroBiasY != 0.0f || cfg.gyroBiasZ != 0.0f) {
+            M.gyroBiasX = cfg.gyroBiasX;
+            M.gyroBiasY = cfg.gyroBiasY;
+            M.gyroBiasZ = cfg.gyroBiasZ;
+            M.gyroBiasSamples = 128;
+        }
         M.angle = rollOk ? roll : 0.0f;
+        M.cleanAngle = M.angle;
         M.center = M.angle;
+        M.oneEuro.Reset(M.angle);
         M.pitch = M.pitchCenter = pitch;
         M.leanOn = cfg.leanStart != 0;
         M.have = true;
         M.steerOutput = 0.0f;
     } else {
         MotionStep(roll, accelTrusted, gyroRollDps, motionDt);
+        float mc = (float)cfg.oneEuroMinCutoff / 100.0f;
+        float b  = (float)cfg.oneEuroBeta / 1000.0f;
+        M.cleanAngle = (cfg.oneEuroMinCutoff > 0) ? M.oneEuro.FilterWithRate(M.angle, gyroRollDps, motionDt, mc, b) : M.angle;
     }
-    float k = cfg.motionSmooth / 100.0f;
+
+    // Starting grid auto-zeroing during the 3-2-1 countdown after a track loading gap (>2500ms):
+    if (ATOMIC_LOAD(g_gridEntryPending)) {
+        ATOMIC_STORE(g_gridEntryPending, 0);
+        M.gridInitPending = true;
+        M.gridEntryStart = now;
+        M.gridStableCount = 0;
+        Log("[Grid] Track loading transition detected: awaiting starting grid stabilization");
+    }
+
+    if (M.gridInitPending) {
+        bool steady = (fabsf(M.gyroRollRate) < 12.0f && rollOk);
+        if (steady) {
+            M.gridStableCount++;
+        } else {
+            M.gridStableCount = 0;
+        }
+        // Auto-zero once hands settle on the starting grid (5 consecutive steady frames ~ 20-50ms)
+        // or timeout after 5000ms if constantly moving:
+        bool timeout = (now - M.gridEntryStart) > 5000;
+        if (M.gridStableCount >= 5 || timeout) {
+            M.center = M.angle;
+            M.steerOutput = 0.0f;
+            M.pitchCenter = M.pitch;
+            M.oneEuro.Reset(M.angle);
+            M.gridInitPending = false;
+            M.gridStableCount = 0;
+            Log("[Grid] Auto-zeroed center at %.1f deg for race start (timeout=%d)", (double)M.angle, timeout ? 1 : 0);
+        }
+    }
+
+    float k = (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) ? 1.0f : (cfg.motionSmooth / 100.0f);
     M.pitch += (pitch - M.pitch) * k;
 
     bool ps = (b2 & 0x01) != 0, tp = (b2 & 0x02) != 0, mic = (b2 & 0x04) != 0;
     int btnKl = 0, btnKr = 0, btnKms = 0;
 
-    if (ps && !M.prevPS) {              // PS button: re-center + haptic tap + cyan flash
+    if (ps && !M.prevPS) {              // PS button: re-center + reset car in Shift 2
         M.center = M.angle;
         M.steerOutput = 0.0f;
         M.pitchCenter = M.pitch;
+        M.oneEuro.Reset(M.angle);
         M.recenterFlash = now + 300;
         btnKl = btnKr = 140; btnKms = 60;
         Log("re-centered via PS button at %.1f deg", (double)M.angle);
@@ -1238,6 +1519,7 @@ static void Parse(const uint8_t* b, DWORD n)
         M.center = M.angle;
         M.steerOutput = 0.0f;
         M.pitchCenter = M.pitch;
+        M.oneEuro.Reset(M.angle);
         M.recenterFlash = now + 250;
         Log("motion steering %s via Mute button (center %.1f deg)", on ? "ON" : "OFF", (double)M.angle);
         if (on) { btnKl = btnKr = 150; btnKms = 60; }
@@ -1261,8 +1543,16 @@ static void Parse(const uint8_t* b, DWORD n)
     }
     if (cfg.handling) lx = (int)lroundf(StickShape((float)lx / 32768.0f) * 32767.0f);   // dead zone, saturation, curve
     int steer = 0;
-    if (motionOn) steer = SmoothSteer(Steer(), motionDt);
-    else M.steerOutput = 0.0f;
+    if (motionOn) {
+        if (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) {
+            steer = Steer(M.cleanAngle);
+            M.steerOutput = (float)steer;
+        } else {
+            steer = SmoothSteer(Steer(M.cleanAngle), motionDt);
+        }
+    } else {
+        M.steerOutput = 0.0f;
+    }
     lx = Clamp(lx + steer, -32768, 32767);
 
     // Steering vibration on a sliding scale tied to input value (strictly max 75%)
@@ -1300,19 +1590,28 @@ static void Parse(const uint8_t* b, DWORD n)
     if (abs(ry) < 1500) ry = 0;
     if (cfg.leanStart || M.leanOn) ry = Clamp(ry + Lean(), -32768, 32767);
 
-    // ---- touchpad flick glance: swiping left/right looks left/right ----
+    // ---- touchpad flick glance: swiping across trackpad looks into corners/mirrors ----
     bool touching = n >= 37 && !(d[32] & 0x80);
     int tx = touching ? d[33] | ((d[34] & 0x0F) << 8) : 0;
     int ty = touching ? (d[34] >> 4) | (d[35] << 4) : 0;
     BYTE touchId = touching ? (BYTE)(d[32] & 0x7F) : 0;
-    if (tp) M.glanceLatch = true; else if (!touching) M.glanceLatch = false;   // the finger that clicked must lift before it can flick
+    if (tp) {
+        M.glanceLatch = true;
+        M.touchGlanceDir = 0;
+        M.touchGlanceDirY = 0;
+        M.touchGlanceHoldUntil = 0;
+        M.touchActive = false;
+    } else if (!touching) {
+        M.glanceLatch = false;
+    }
 
     int rx = Axis(d[2], false);
     if (abs(rx) < 1500) rx = 0;
-    int glanceOff = 0;
+    int glanceRx = 0, glanceRy = 0;
     if (cfg.glance && !tp && !M.glanceLatch) {
-        glanceOff = ProcessTouchGlance(touching, touchId, tx, ty, now, &btnKl, &btnKr, &btnKms);
-        rx = Clamp(rx + glanceOff, -32768, 32767);
+        ProcessTouchGlance(touching, touchId, tx, ty, now, &glanceRx, &glanceRy, &btnKl, &btnKr, &btnKms);
+        rx = Clamp(rx + glanceRx, -32768, 32767);
+        ry = Clamp(ry + glanceRy, -32768, 32767);
     }
 
     // ---- controller fast flick / motion vibration ----
@@ -1432,15 +1731,15 @@ static void Parse(const uint8_t* b, DWORD n)
 
     // Snapshot of what the game is being fed: every second while a synthetic input (tilt, glance, flick, steerVibe)
     // is active, otherwise every 10 s. Separates "the proxy produced nothing" from "the game ignored it".
-    int statusEvery = (motionOn || glanceOff || flickOn || targetVibeL || targetVibeR) ? 1000 : 10000;
+    int statusEvery = (motionOn || glanceRx || glanceRy || flickOn || targetVibeL || targetVibeR) ? 1000 : 10000;
     if (cfg.debug && (int32_t)(now - M.statusLast) >= statusEvery) {
         M.statusLast = now;
-        Log("status: getState/period=%ld motion=%d mode=%d accel=%d/%d/%d g=%.2f gyroRaw=%d/%d/%d gyroRoll=%.1f bias=%d roll=%.1f center=%.1f pitch=%.1f tiltSteer=%d stick=%u/%d glance=%d flick=%d stVibe=%d/%d -> game lx=%d rx=%d ry=%d L2=%d R2=%d btn=%04X",
+        Log("status: getState/period=%ld motion=%d mode=%d accel=%d/%d/%d g=%.2f gyroRaw=%d/%d/%d gyroRoll=%.1f bias=%.2f/%.2f/%.2f (%d) roll=%.1f center=%.1f pitch=%.1f tiltSteer=%d stick=%u/%d glance=(%d,%d) flick=%d stVibe=%d/%d -> game lx=%d rx=%d ry=%d L2=%d R2=%d btn=%04X",
             (long)InterlockedExchange(&g_getStateCalls, 0), motionOn ? 1 : 0, cfg.motionMode,
             (int)M.filtAx, (int)M.filtAy, (int)M.filtAz, (double)(accelMagnitude / 8192.0f),
-            gx, gy, gz, (double)M.gyroRollRate, M.gyroBiasSamples,
+            gx, gy, gz, (double)M.gyroRollRate, (double)M.gyroBiasX, (double)M.gyroBiasY, (double)M.gyroBiasZ, M.gyroBiasSamples,
             (double)M.angle, (double)M.center, (double)M.pitch,
-            steer, (unsigned)d[0], rawStickLX, glanceOff, flickOn ? 1 : 0,
+            steer, (unsigned)d[0], rawStickLX, glanceRx, glanceRy, flickOn ? 1 : 0,
             (int)targetVibeL, (int)targetVibeR,
             (int)p.lx, (int)p.rx, (int)p.ry, (int)p.bLeftTrigger, (int)p.bRightTrigger, (unsigned)p.wButtons);
     }
@@ -1453,6 +1752,27 @@ static void Parse(const uint8_t* b, DWORD n)
     if (buzz != g_buzz)      { g_buzz = buzz;    flush = true; }
     if (leds != g_leds)      { g_leds = leds;    flush = true; }
     if (micLed != g_micLed)  { g_micLed = micLed; flush = true; }
+
+    // R2 throttle vibration tracking: triggers flush immediately when pulling/releasing throttle
+    uint8_t r2Pull = p.bRightTrigger;
+    int rRumble = g_rumbleR > 0 ? g_rumbleR : ((r2Pull > 25 && g_rumbleL > 0) ? g_rumbleL : 0);
+    bool rVibeNow = false;
+    int rLevelNow = 0;
+    if (cfg.throttleVibeMax > 0 && inRace) {
+        if (cfg.limiter && buzz) {
+            rVibeNow = true;
+            rLevelNow = Clamp(cfg.limiterStrength, 1, cfg.throttleVibeMax);
+        } else if (cfg.rumbleToTrig && rRumble >= cfg.rumbleThresh) {
+            rVibeNow = true;
+            rLevelNow = 1 + (rRumble * (cfg.throttleVibeMax - 1)) / 255;
+            rLevelNow = Clamp(rLevelNow, 1, cfg.throttleVibeMax);
+        }
+    }
+    if (rVibeNow != M.rVibeActive || (rVibeNow && abs(rLevelNow - M.lastRLevel) >= 1)) {
+        M.rVibeActive = rVibeNow;
+        M.lastRLevel = rLevelNow;
+        flush = true;
+    }
     if (kms > 0) {
         if (!g_kickOn) { g_kickL = g_kickR = 0; g_kickUntil = now; }
         if (kl > g_kickL) g_kickL = kl;
@@ -1460,6 +1780,8 @@ static void Parse(const uint8_t* b, DWORD n)
         DWORD until = now + (DWORD)kms;
         if ((int32_t)(until - g_kickUntil) > 0) g_kickUntil = until;
         g_kickOn = true;
+        ATOMIC_STORE(g_lastRumbleMs, now);
+        M.lastRumble = now;
         flush = true;
     } else if (g_kickOn && (int32_t)(now - g_kickUntil) >= 0) {
         g_kickOn = false; g_kickL = g_kickR = 0;
@@ -1477,6 +1799,10 @@ static void Parse(const uint8_t* b, DWORD n)
         if (edge || diffL >= 4 || diffR >= 4 || (int32_t)(now - M.lastSteerFlush) >= 20) {
             g_steerVibeL = targetVibeL;
             g_steerVibeR = targetVibeR;
+            if (g_steerVibeL > 0 || g_steerVibeR > 0) {
+                ATOMIC_STORE(g_lastRumbleMs, now);
+                M.lastRumble = now;
+            }
             M.lastSteerFlush = now;
             flush = true;
         }
@@ -1526,11 +1852,18 @@ static DWORD WINAPI ReaderThread(LPVOID)
         warned = false;
         Log("USB DualSense opened");
         DWORD now0 = NowMs();
-        memset(&M, 0, sizeof M);
+        M = {};
+        if (cfg.gyroBiasX != 0.0f || cfg.gyroBiasY != 0.0f || cfg.gyroBiasZ != 0.0f) {
+            M.gyroBiasX = cfg.gyroBiasX;
+            M.gyroBiasY = cfg.gyroBiasY;
+            M.gyroBiasZ = cfg.gyroBiasZ;
+            M.gyroBiasSamples = 128;
+        }
         M.leanOn = cfg.leanStart != 0;
         M.bootActive = cfg.boot != 0;                   // ignition sequence
         M.bootStart = now0;
         ATOMIC_STORE(g_raceActive, 0);
+        ATOMIC_STORE(g_gridEntryPending, 0);
 
         EnterCriticalSection(&g_cs);
         g_dev = h;
@@ -1642,6 +1975,12 @@ __declspec(dllexport) DWORD WINAPI XInputGetState(DWORD idx, XState* st)
     if (!st) return ERROR_BAD_ARGUMENTS;
     if (idx == 0 && ATOMIC_LOAD(g_connected)) {
         InterlockedIncrement(&g_getStateCalls);
+        DWORD now = NowMs();
+        DWORD last = ATOMIC_LOAD(g_lastGetStateMs);
+        ATOMIC_STORE(g_lastGetStateMs, now);
+        if (last != 0 && (DWORD)(now - last) > 2500) {
+            ATOMIC_STORE(g_gridEntryPending, 1);
+        }
         EnterCriticalSection(&g_cs);
         st->packet = g_packet;
         st->pad = g_pad;
