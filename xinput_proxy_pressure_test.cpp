@@ -776,6 +776,45 @@ static void PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING()
     int lockOutput = SmoothSteer(lockTarget, 0.004f);
     Check(lockTarget == -32767, "zero-lag passthrough: -75 deg reaches full lock -32767");
     Check(lockOutput == -32767, "zero-lag passthrough: -75 deg lock reached with zero delay");
+
+    // 4. Verify Track Loading Screen Exit Transition (200 ms C^2 Smootherstep Auto-Ramp)
+    // Simulate active tilt at 30 degrees while resting during track load
+    ResetMotion(0.0f);
+    M.cleanAngle = 30.0f;
+    int expectedUnrampedSteer = Steer(30.0f); // ~12841
+    EnterCriticalSection(&g_cs);
+    g_pad.lx = (SHORT)expectedUnrampedSteer;
+    LeaveCriticalSection(&g_cs);
+
+    // Simulate 3.0s loading screen stall (XInputGetState gap = 3000 ms)
+    DWORD now = NowMs();
+    ATOMIC_STORE(g_lastGetStateMs, now - 3000);
+    ATOMIC_STORE(g_loadRampStartMs, 0);
+
+    // Frame 0 upon exiting loading screen: gap > 1200ms triggers g_loadRampStartMs = now
+    XState sExit0 = {};
+    DWORD res0 = XInputGetState(0, &sExit0);
+    Check(res0 == ERROR_SUCCESS, "loading exit ramp: XInputGetState returns ERROR_SUCCESS on load exit");
+    Check(ATOMIC_LOAD(g_loadRampStartMs) != 0, "loading exit ramp: gap > 1200ms triggered g_loadRampStartMs");
+    // At t=0, u=0 -> s=0, so lx is 0
+    Check(abs(sExit0.pad.lx) <= 50, "loading exit ramp: frame 0 steering softly zeroes to prevent rack snap (<= 50)");
+
+    // Frame at t=100ms (mid-ramp, u=0.5 -> s=0.5):
+    ATOMIC_STORE(g_loadRampStartMs, now - 100);
+    ATOMIC_STORE(g_lastGetStateMs, now - 16); // Normal 60Hz frame interval
+    XState sExitMid = {};
+    XInputGetState(0, &sExitMid);
+    // At u=0.5, s(u) = 0.5, so lx is ~50% of expectedUnrampedSteer
+    int expectedMid = (int)lroundf((float)expectedUnrampedSteer * 0.5f);
+    Check(abs(sExitMid.pad.lx - expectedMid) <= 50, "loading exit ramp: mid-ramp at 100ms achieves 50% smooth progress");
+
+    // Frame at t=200ms (end-ramp, u=1.0 -> s=1.0):
+    ATOMIC_STORE(g_loadRampStartMs, now - 200);
+    ATOMIC_STORE(g_lastGetStateMs, now - 16);
+    XState sExitEnd = {};
+    XInputGetState(0, &sExitEnd);
+    Check(sExitEnd.pad.lx == expectedUnrampedSteer, "loading exit ramp: 200ms reaches 100% full unramped target");
+    Check(ATOMIC_LOAD(g_loadRampStartMs) == 0, "loading exit ramp: g_loadRampStartMs reset to 0 upon completion");
 }
 
 int main()

@@ -40,10 +40,10 @@ All deployment artifacts MUST remain byte-identical across the three operational
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `058E245858AF4C96E138AE2F1BD6F71B42A33289DEC555CB293BEFE2422501F6` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `1D9279210E4F04840F8A6FE22E6BAC04FBC6118D6548CAB7C732948C0BD5F730` | Verified | Verified | Verified |
 | `shift2_dualsense.ini` | 15,198 | `C119785A6702E4E59AA425095F4371D93931F7FD1530C6D263D141E666DFDB0C` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `A7BCBD59A4ACA0095153FB57C7A32BB02FFDE7EDA62B791673B00036739A6F0A` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `EF4088BDFB8D272A7A2759AA5546A00CBBBD45C1A679758375E0613A8DD28D1F` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `0C6D0AF097AA8C6BF61576F9D647F427D6A65B3C98916C9A83F24F6AA181727C` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `D6358C7FC3FF410540AA99A65230A09A1890319BB9F3B6E5E3923D91A7140640` | Verified | Verified | Verified |
 
 ---
 
@@ -374,6 +374,8 @@ Forensic analysis of the "works in menu/showroom but cuts out after 1 millimeter
    - 126 of 126 PINPOINT checks pass (100% SUCCESS).
 5. **Deployment & Verification**:
    - Deployed and verified 100% SHA256 parity across Workspace, Desktop Staging, and Game Directory via `verify_repo.ps1 -Deploy -UpdateDocHashes`.
+
+
 
 
 

@@ -428,6 +428,7 @@ static volatile LONG     g_crash = 0;                // crash shock active (set 
 static volatile DWORD    g_crashUntil = 0;
 static volatile LONG     g_getStateCalls = 0;        // game's XInputGetState(0) calls since the last status line
 static volatile DWORD    g_lastGetStateMs = 0;       // timestamp of last XInputGetState call
+static volatile DWORD    g_loadRampStartMs = 0;      // start timestamp of 200ms C^2 smootherstep transition ramp
 
 // Everything below is only touched with g_cs held.
 static XGamepad          g_pad;
@@ -1963,10 +1964,26 @@ __declspec(dllexport) DWORD WINAPI XInputGetState(DWORD idx, XState* st)
     if (idx == 0 && ATOMIC_LOAD(g_connected)) {
         InterlockedIncrement(&g_getStateCalls);
         DWORD now = NowMs();
+        DWORD prev = ATOMIC_LOAD(g_lastGetStateMs);
+        if (prev != 0 && (DWORD)(now - prev) > 1200) {
+            ATOMIC_STORE(g_loadRampStartMs, now);
+            Log("loading screen exit detected (gap=%lu ms) - triggering 200ms C2 transition ramp", (unsigned long)(now - prev));
+        }
         ATOMIC_STORE(g_lastGetStateMs, now);
         EnterCriticalSection(&g_cs);
         st->packet = g_packet;
         st->pad = g_pad;
+        DWORD rampStart = ATOMIC_LOAD(g_loadRampStartMs);
+        if (rampStart != 0) {
+            DWORD elapsed = (DWORD)(now - rampStart);
+            if (elapsed < 200) {
+                float u = (float)elapsed / 200.0f;
+                float s = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f);
+                st->pad.lx = (SHORT)lroundf((float)st->pad.lx * s);
+            } else {
+                ATOMIC_STORE(g_loadRampStartMs, 0);
+            }
+        }
         LeaveCriticalSection(&g_cs);
         return ERROR_SUCCESS;
     }
