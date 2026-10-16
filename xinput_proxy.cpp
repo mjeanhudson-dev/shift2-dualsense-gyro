@@ -98,7 +98,7 @@ struct Config {
     int handling, stickDead, gameDead, steerCurve, steerSat, steerLead, steerLeadMs, traction, tractionCut;
     // [Controls]
     int inRaceOnly, raceTimeoutMs;
-    int l3Handbrake, psBtn;
+    int l3Handbrake, xHandbrake, psBtn;
     // [SteeringVibe]
     int steerVibe, steerVibeMax, steerVibeDead, steerVibeCurve, steerVibeDir;
     // [MenuHaptics]
@@ -136,7 +136,7 @@ static Config DefaultConfig()
     c.handling = 1;     c.stickDead = 3;         c.gameDead = 4;    c.steerCurve = 100; c.steerSat = 97;
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
-    c.l3Handbrake = 1;  c.psBtn = 1;
+    c.l3Handbrake = 1;  c.xHandbrake = 1;  c.psBtn = 1;
     c.steerVibe = 1;    c.steerVibeMax = 25;     c.steerVibeDead = 10; c.steerVibeCurve = 100;  c.steerVibeDir = 1;
     c.menuButtonVibe = 1;       c.menuButtonPower = 55;     c.menuButtonMs = 25;
     c.menuTriggerMode = 0;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;
@@ -272,6 +272,7 @@ static void LoadConfig()
     else if (t2 >= 0)          cfg.raceTimeoutMs = Clamp(t2, 500, 10000);
     else if (t1 >= 0)          cfg.raceTimeoutMs = Clamp(t1, 500, 10000);
     cfg.l3Handbrake   = RD("Controls", "L3Handbrake", cfg.l3Handbrake);
+    cfg.xHandbrake    = RD("Controls", "XHandbrake",  cfg.xHandbrake);
     cfg.psBtn         = RD("Controls", "PSButton",    cfg.psBtn);
 
     cfg.steerVibe      = RD("SteeringVibe", "Enabled",     cfg.steerVibe);
@@ -392,8 +393,8 @@ static void LogStartup()
     Log("crash: on=%d thr=%d jump=%d ms=%d | tach: on=%d redline=%d auto=%d inverse=%d | limiter: on=%d z%d s%d %dHz",
         cfg.crashEnable, cfg.crashThresh, cfg.crashJump, cfg.crashMs, cfg.tach, cfg.redline, cfg.autoShift, cfg.inverseShift,
         cfg.limiter, cfg.limiterZone, cfg.limiterStrength, cfg.limiterFreq);
-    Log("controls: inRaceOnly=%d timeout=%dms l3Handbrake=%d psBtn=%d | flick: on=%d thr=%d ms=%d lock=%d btn=%d | glance: on=%d str=%d dead=%d",
-        cfg.inRaceOnly, cfg.raceTimeoutMs, cfg.l3Handbrake, cfg.psBtn,
+    Log("controls: inRaceOnly=%d timeout=%dms l3Handbrake=%d xHandbrake=%d psBtn=%d | flick: on=%d thr=%d ms=%d lock=%d btn=%d | glance: on=%d str=%d dead=%d",
+        cfg.inRaceOnly, cfg.raceTimeoutMs, cfg.l3Handbrake, cfg.xHandbrake, cfg.psBtn,
         cfg.flick, cfg.flickThresh, cfg.flickMs, cfg.flickLock, cfg.flickBtn, cfg.glance, cfg.glanceStrength, cfg.glanceDead);
     Log("steeringVibe: on=%d max=%d%% dead=%d%% curve=%d dir=%d",
         cfg.steerVibe, cfg.steerVibeMax, cfg.steerVibeDead, cfg.steerVibeCurve, cfg.steerVibeDir);
@@ -888,6 +889,7 @@ struct OneEuroFilter {
 static struct {
     bool have, prevPS, prevMic, absOn, leanOn, lockHeld, prevCrash, bootActive, leadInit, glanceLatch;
     bool inRaceState, prevInRace, prevMenuL2, prevMenuR2;
+    bool prevSquare, squareHandbrake, prevL3, l3Handbrake;
     bool rVibeActive;
     int lastRLevel;
     bool touchActive;
@@ -1323,19 +1325,44 @@ static void Parse(const uint8_t* b, DWORD n)
     uint8_t hat = b0 & 0x0F;
     WORD w = kHat[hat > 8 ? 8 : hat];
 
-    if (b0 & 0x10) w |= XB_X;      // Square
-    if (b0 & 0x20) w |= XB_A;      // Cross
+    bool sq = (b0 & 0x10) != 0;
+    if (sq && !M.prevSquare) {
+        M.squareHandbrake = (inRace && cfg.xHandbrake);
+    } else if (!sq) {
+        M.squareHandbrake = false;
+    }
+    M.prevSquare = sq;
+
+    if (sq) {
+        if (M.squareHandbrake) w |= XB_A;     // In race: Square (Xbox X) = Handbrake (Xbox A button)
+        else                   w |= XB_X;     // In menus or disabled: standard Square / Xbox X
+    }
+    if (b0 & 0x20) w |= XB_A;      // Cross (Xbox A)
     if (b0 & 0x40) w |= XB_B;      // Circle
     if (b0 & 0x80) w |= XB_Y;      // Triangle
     if (b1 & 0x01) w |= XB_LB;     // L1
     if (b1 & 0x02) w |= XB_RB;     // R1
     if (b1 & 0x10) w |= XB_BACK;   // Create
     if (b1 & 0x20) w |= XB_START;  // Options
-    if (b1 & 0x40) {
-        if (inRace && cfg.l3Handbrake) w |= XB_A;     // In race: L3 = Handbrake (Xbox A button)
-        else                          w |= XB_L3;    // In menus: standard L3 stick click
+    bool l3 = (b1 & 0x40) != 0;
+    if (l3 && !M.prevL3) {
+        M.l3Handbrake = (inRace && cfg.l3Handbrake);
+    } else if (!l3) {
+        M.l3Handbrake = false;
+    }
+    M.prevL3 = l3;
+
+    if (l3) {
+        if (M.l3Handbrake) w |= XB_A;     // In race: L3 = Handbrake (Xbox A button)
+        else               w |= XB_L3;    // In menus: standard L3 stick click
     }
     if (b1 & 0x80) w |= XB_R3;
+
+    // Active handbrake engagement refreshes race activity timestamp so race mode is sustained while holding handbrake
+    if (M.squareHandbrake || M.l3Handbrake || (inRace && (b0 & 0x20))) {
+        M.lastRaceActivity = now;
+        ATOMIC_STORE(g_lastRaceActivityMs, now);
+    }
 
     // Menu button vibration (subtle, less intense tactile feedback on navigation / selection in menus)
     int menuKl = 0, menuKr = 0, menuKms = 0;
@@ -1353,7 +1380,7 @@ static void Parse(const uint8_t* b, DWORD n)
     M.prevMenuL2 = (d[4] > 40);
     M.prevMenuR2 = (d[5] > 40);
 
-    // Gear shifts: Circle = shift up, Square = shift down; Left Bumper (L1 / LB) = clutch
+    // Gear shifts: Circle = shift up, Square = shift down (when XHandbrake=0); Left Bumper (L1 / LB) = clutch
     WORD shiftBtns = w & (XB_X | XB_B);
     bool upEdge   = (w & XB_B) && !(M.prevShiftBtns & XB_B);   // Circle = upshift
     bool downEdge = (w & XB_X) && !(M.prevShiftBtns & XB_X);   // Square = downshift

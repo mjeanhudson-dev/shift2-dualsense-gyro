@@ -126,7 +126,13 @@ n = (g * blend) + (1.0f - g * blend) * n;
 
 ### Handbrake Controls
 - **Physical PlayStation Cross button ('X' / Xbox A):** Mapped directly to Xbox A (Shift 2's native Handbrake button).
-- **Alternate L3 Handbrake (`L3Handbrake=1`):** Clicking Left Stick (L3) also injects Xbox A during race driving.
+- **Dual X / A Handbrake (`XHandbrake=1`, default `1`):**
+  - Both PlayStation Cross ('X' glyph / Xbox A) and PlayStation Square (corresponds to Xbox 'X' button / `XB_X`) act as Handbrake (`XB_A`) during race driving.
+  - Suppresses `XB_X` during race driving when Square is pressed for Handbrake so it never inadvertently triggers Shift 2's `Driving View` camera toggle.
+  - Preserves standard button functions in menus: Cross sends `XB_A` (Select / Accept / OK) and Square sends `XB_X` (Details / Secondary option).
+  - **Edge-Latched Transition Immunity:** Handbrake button roles are latched on initial press edge (`M.squareHandbrake`, `M.l3Handbrake`). Holding Square continuously through race-to-menu timeout transitions sustains `XB_A` and prevents spurious emission of `XB_X` (eliminating camera flips during extended slides or stationary staging).
+  - **Race State Refresh on Handbrake:** Actively holding handbrake in race mode refreshes `lastRaceActivity`, preventing idle timeout dropouts during long handbrake holds.
+- **Alternate L3 Handbrake (`L3Handbrake=1`):** Clicking Left Stick (L3) also injects Xbox A during race driving, with identical edge-latched transition immunity.
 
 ### Trigger (L2 / R2) Menu Isolation & 15-Count Deadzone
 - **Unified Race State Machine:** Driving state is governed by an authoritative unified state machine (`g_raceActive`, `M.inRaceState`, `g_lastRaceActivityMs`). Driving is flagged exclusively by throttle engagement ($R_2 > 35$) or active game rumble ($>0$).
@@ -230,10 +236,11 @@ Shift 2 Unleashed's boot videos (`BootFlow_in.bik` and `BootFlow_out.bik`) add ~
 
 ## 9. PINPOINT Verification Test Suite (`xinput_proxy_pressure_test.exe`)
 
-The generic test suite has been completely replaced with 6 targeted PINPOINT verification suites (56 exhaustive checks) targeting every critical failure mode:
+The generic test suite has been completely replaced with 7 targeted PINPOINT verification suites (114 exhaustive checks) targeting every critical failure mode:
 1. **`PINPOINT_BOOT_HORIZON_ZERO`:** Controller boots at -16.5° tilt; levels to 0°; verifies $M.center = 0.0^\circ$ and steering output is exactly 0. Verifies tilting 1mm left (-2.0°) immediately produces left steering (`lx < 0`), eliminating fling thresholds.
 2. **`PINPOINT_CORNER_HOLD_STABILITY`:** Sustained 25.0° roll hold for 3.0s at 250 Hz under rumble; verifies $\tau \ge 25.0\text{ s}$ prevents steering collapse.
 3. **`PINPOINT_TOUCHPAD_GLANCE_DECOUPLING`:** Left, right, diagonal, repeat, and steep downward swipes; verifies pure $rx / ry = \pm 32767$ without `XB_R3` camera freeze, repeat hold refresh, and aspect ratio protection for Look Behind (`XB_Y`).
 4. **`PINPOINT_MENU_TRIGGER_RECOVERY`:** Engages race rumble/throttle, idles 4.1s; verifies timeout resets trigger mode to `0x05` (soft) and deadzones resting finger float (10 counts -> 0). Pulls L2 hard (200 counts) in menus; verifies race active mode is never engaged and triggers remain soft.
 5. **`PINPOINT_THROTTLE_VIBRATION_ROUTING`:** Pulls throttle under race rumble; captures output report; verifies R2 vibration mode `0x26` at 40 Hz. Verifies `ThrottleVibeMax=0` keeps R2 in pure constant resistance mode `0x21`.
 6. **`PINPOINT_ASYMMETRIC_RACK_DAMPENING`:** Verifies turn-in, unwinding, and counter-steer crossover response times with exact zero deadband settling, and direct 1:1 passthrough when `Smoothing=100`.
+7. **`PINPOINT_X_A_HANDBRAKE_MAPPING`:** 27 exhaustive checks verifying dual X / A Handbrake mapping (`XB_A`) and Driving View camera suppression (`XB_X`) in race mode; standard menu isolation (Cross=`XB_A`, Square=`XB_X`, L3=`XB_L3`); edge-latched transition immunity across the 4.0s idle timeout while holding Square or L3; fallback when `XHandbrake=0`; and full support when `InRaceOnly=0`. (All 114 checks pass 100%).

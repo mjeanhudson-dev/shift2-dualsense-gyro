@@ -129,7 +129,7 @@ static bool FlushAndCapture(uint8_t* outReport)
 // -----------------------------------------------------------------------------
 static void PINPOINT_BOOT_HORIZON_ZERO()
 {
-    std::cout << "\n[PINPOINT 1/6] Running PINPOINT_BOOT_HORIZON_ZERO...\n";
+    std::cout << "\n[PINPOINT 1/7] Running PINPOINT_BOOT_HORIZON_ZERO...\n";
     uint8_t report[kReportLen];
     Frame(report);
 
@@ -177,7 +177,7 @@ static void PINPOINT_BOOT_HORIZON_ZERO()
 // -----------------------------------------------------------------------------
 static void PINPOINT_CORNER_HOLD_STABILITY()
 {
-    std::cout << "\n[PINPOINT 2/6] Running PINPOINT_CORNER_HOLD_STABILITY...\n";
+    std::cout << "\n[PINPOINT 2/7] Running PINPOINT_CORNER_HOLD_STABILITY...\n";
     uint8_t report[kReportLen];
     ResetMotion(0.0f);
     M.angle = 25.0f;
@@ -223,7 +223,7 @@ static void PINPOINT_CORNER_HOLD_STABILITY()
 // -----------------------------------------------------------------------------
 static void PINPOINT_TOUCHPAD_GLANCE_DECOUPLING()
 {
-    std::cout << "\n[PINPOINT 3/6] Running PINPOINT_TOUCHPAD_GLANCE_DECOUPLING...\n";
+    std::cout << "\n[PINPOINT 3/7] Running PINPOINT_TOUCHPAD_GLANCE_DECOUPLING...\n";
     uint8_t report[kReportLen];
     M.touchActive = false;
     M.touchGlanceDir = 0;
@@ -313,7 +313,7 @@ static void PINPOINT_TOUCHPAD_GLANCE_DECOUPLING()
 // -----------------------------------------------------------------------------
 static void PINPOINT_MENU_TRIGGER_RECOVERY()
 {
-    std::cout << "\n[PINPOINT 4/6] Running PINPOINT_MENU_TRIGGER_RECOVERY...\n";
+    std::cout << "\n[PINPOINT 4/7] Running PINPOINT_MENU_TRIGGER_RECOVERY...\n";
     uint8_t report[kReportLen];
     Frame(report);
 
@@ -376,7 +376,7 @@ static void PINPOINT_MENU_TRIGGER_RECOVERY()
 // -----------------------------------------------------------------------------
 static void PINPOINT_THROTTLE_VIBRATION_ROUTING()
 {
-    std::cout << "\n[PINPOINT 5/6] Running PINPOINT_THROTTLE_VIBRATION_ROUTING...\n";
+    std::cout << "\n[PINPOINT 5/7] Running PINPOINT_THROTTLE_VIBRATION_ROUTING...\n";
     uint8_t report[kReportLen];
     Frame(report);
 
@@ -425,7 +425,7 @@ static void PINPOINT_THROTTLE_VIBRATION_ROUTING()
 // -----------------------------------------------------------------------------
 static void PINPOINT_ASYMMETRIC_RACK_DAMPENING()
 {
-    std::cout << "\n[PINPOINT 6/6] Running PINPOINT_ASYMMETRIC_RACK_DAMPENING...\n";
+    std::cout << "\n[PINPOINT 6/7] Running PINPOINT_ASYMMETRIC_RACK_DAMPENING...\n";
     cfg.handling = 1;
     cfg.gameDead = 4;
     cfg.motionDead = 1;
@@ -464,6 +464,256 @@ static void PINPOINT_ASYMMETRIC_RACK_DAMPENING()
     cfg.motionSmooth = 50;
 }
 
+// -----------------------------------------------------------------------------
+// PINPOINT TEST 7: X / A HANDBRAKE DUAL MAPPING & MENU ISOLATION
+// Root Cause: On Xbox controller layout, 'X' is the left face button (PlayStation Square).
+// On PlayStation controller layout, 'X' glyph is the bottom face button (Xbox A / Cross).
+// In Shift 2 default controls, Handbrake is Xbox A and Driving View (camera) is Xbox X.
+// When players press 'X' on Xbox layout during race, it triggered Driving View instead of Handbrake.
+// Verification:
+// - In race mode with XHandbrake=1:
+//   - Press Cross: sends XB_A (Handbrake), does NOT send XB_X.
+//   - Press Square: sends XB_A (Handbrake), suppresses XB_X (prevents camera toggle).
+//   - Press both Square and Cross: sends XB_A, no XB_X.
+//   - Press L3 (with L3Handbrake=1): sends XB_A (Handbrake).
+//   - Press neither: neither XB_A nor XB_X.
+// - In menu mode (!inRace):
+//   - Press Cross: sends XB_A (Select / Accept), does NOT send XB_X.
+//   - Press Square: sends XB_X (Details / Secondary), does NOT send XB_A.
+//   - Press both Square and Cross: sends both XB_A and XB_X.
+//   - Press L3: sends XB_L3, does NOT send XB_A.
+// - In race mode with XHandbrake=0 (disabled):
+//   - Press Square: sends XB_X, does NOT send XB_A.
+//   - Press Cross: sends XB_A.
+// -----------------------------------------------------------------------------
+static void PINPOINT_X_A_HANDBRAKE_MAPPING()
+{
+    std::cout << "\n[PINPOINT 7/7] Running PINPOINT_X_A_HANDBRAKE_MAPPING...\n";
+    uint8_t report[kReportLen];
+    cfg.xHandbrake = 1;
+    cfg.l3Handbrake = 1;
+    cfg.inRaceOnly = 1;
+
+    // --- 1. RACE MODE WITH XHandbrake=1 ---
+    ATOMIC_STORE(g_raceActive, 1);
+    M.inRaceState = true;
+    M.lastRaceActivity = NowMs();
+
+    // 1a. Press Cross (d[7] / b0 & 0x20):
+    Frame(report);
+    report[6] = 100; // throttle engaged so driving stays active
+    report[8] = 0x08 | 0x20; // Cross pressed
+    Send(report);
+    XState sCrossRace = State();
+    Check((sCrossRace.pad.wButtons & XB_A) != 0, "race handbrake: Cross sends XB_A (Handbrake)");
+    Check((sCrossRace.pad.wButtons & XB_X) == 0, "race handbrake: Cross does not send XB_X");
+
+    // 1b. Press Square (d[7] / b0 & 0x10):
+    Frame(report);
+    report[6] = 100;
+    report[8] = 0x08 | 0x10; // Square pressed
+    Send(report);
+    XState sSquareRace = State();
+    Check((sSquareRace.pad.wButtons & XB_A) != 0, "race handbrake: Square sends XB_A (Handbrake)");
+    Check((sSquareRace.pad.wButtons & XB_X) == 0, "race handbrake: Square suppresses XB_X (prevents camera change)");
+
+    // 1c. Press both Square and Cross simultaneously:
+    Frame(report);
+    report[6] = 100;
+    report[8] = 0x08 | 0x10 | 0x20; // Square + Cross pressed
+    Send(report);
+    XState sBothRace = State();
+    Check((sBothRace.pad.wButtons & XB_A) != 0, "race handbrake: Square + Cross sends XB_A");
+    Check((sBothRace.pad.wButtons & XB_X) == 0, "race handbrake: Square + Cross suppresses XB_X");
+
+    // 1d. Neither pressed:
+    Frame(report);
+    report[6] = 100;
+    report[8] = 0x08; // No face buttons pressed
+    Send(report);
+    XState sNoneRace = State();
+    Check((sNoneRace.pad.wButtons & (XB_A | XB_X)) == 0, "race handbrake: releasing buttons clears XB_A and XB_X");
+
+    // 1e. L3 pressed in race (b1 & 0x40 / report[9] & 0x40):
+    Frame(report);
+    report[6] = 100;
+    report[9] = 0x40; // L3 click
+    Send(report);
+    XState sL3Race = State();
+    Check((sL3Race.pad.wButtons & XB_A) != 0, "race handbrake: L3 sends XB_A (L3Handbrake)");
+    Check((sL3Race.pad.wButtons & XB_L3) == 0, "race handbrake: L3 stick click is mapped to XB_A in race");
+
+    // --- 2. MENU MODE (!inRace) ---
+    SetRumble(0, 0);
+    ATOMIC_STORE(g_raceActive, 0);
+    M.inRaceState = false;
+    M.lastRaceActivity = NowMs() - 5000;
+    ATOMIC_STORE(g_lastRaceActivityMs, NowMs() - 5000);
+
+    // 2a. Press Cross in menu:
+    Frame(report);
+    report[8] = 0x08 | 0x20; // Cross pressed
+    Send(report);
+    XState sCrossMenu = State();
+    Check((sCrossMenu.pad.wButtons & XB_A) != 0, "menu buttons: Cross sends XB_A (Select / OK)");
+    Check((sCrossMenu.pad.wButtons & XB_X) == 0, "menu buttons: Cross does not send XB_X in menu");
+
+    // 2b. Press Square in menu:
+    Frame(report);
+    report[8] = 0x08 | 0x10; // Square pressed
+    Send(report);
+    XState sSquareMenu = State();
+    Check((sSquareMenu.pad.wButtons & XB_X) != 0, "menu buttons: Square sends XB_X (Details / Secondary)");
+    Check((sSquareMenu.pad.wButtons & XB_A) == 0, "menu buttons: Square does NOT send XB_A in menu");
+
+    // 2c. Press both Square and Cross in menu:
+    Frame(report);
+    report[8] = 0x08 | 0x10 | 0x20; // Both pressed
+    Send(report);
+    XState sBothMenu = State();
+    Check((sBothMenu.pad.wButtons & XB_A) != 0, "menu buttons: both sends XB_A");
+    Check((sBothMenu.pad.wButtons & XB_X) != 0, "menu buttons: both sends XB_X");
+
+    // 2d. Press L3 in menu:
+    Frame(report);
+    report[9] = 0x40; // L3 click
+    Send(report);
+    XState sL3Menu = State();
+    Check((sL3Menu.pad.wButtons & XB_L3) != 0, "menu buttons: L3 sends standard XB_L3 in menu");
+    Check((sL3Menu.pad.wButtons & XB_A) == 0, "menu buttons: L3 does NOT send XB_A in menu");
+
+    // --- 3. RACE MODE WITH XHandbrake=0 (Disabled) ---
+    cfg.xHandbrake = 0;
+    ATOMIC_STORE(g_raceActive, 1);
+    M.inRaceState = true;
+    M.lastRaceActivity = NowMs();
+
+    // Square pressed with XHandbrake=0 in race:
+    Frame(report);
+    report[6] = 100;
+    report[8] = 0x08 | 0x10;
+    Send(report);
+    XState sSquareDisabled = State();
+    Check((sSquareDisabled.pad.wButtons & XB_X) != 0, "disabled xHandbrake: Square sends XB_X in race when XHandbrake=0");
+    Check((sSquareDisabled.pad.wButtons & XB_A) == 0, "disabled xHandbrake: Square does NOT send XB_A when XHandbrake=0");
+
+    // Cross pressed with XHandbrake=0 in race:
+    Frame(report);
+    report[6] = 100;
+    report[8] = 0x08 | 0x20;
+    Send(report);
+    XState sCrossDisabled = State();
+    Check((sCrossDisabled.pad.wButtons & XB_A) != 0, "disabled xHandbrake: Cross still sends XB_A (Handbrake)");
+
+    // Restore default
+    cfg.xHandbrake = 1;
+
+    // --- 4. RACE -> MENU TIMEOUT TRANSITION IMMUNITY (Sustained Square Hold) ---
+    // Start race mode and press Square for Handbrake:
+    ATOMIC_STORE(g_raceActive, 1);
+    M.inRaceState = true;
+    M.lastRaceActivity = NowMs();
+    Frame(report);
+    report[6] = 100; // throttle engaged
+    report[8] = 0x08 | 0x10; // Square pressed
+    Send(report);
+    XState sHoldStart = State();
+    Check((sHoldStart.pad.wButtons & XB_A) != 0, "hold immunity: Square engages XB_A in race");
+    Check((sHoldStart.pad.wButtons & XB_X) == 0, "hold immunity: Square does not send XB_X in race");
+
+    // Idle for >4.0s while Square is CONTINUOUSLY HELD:
+    Frame(report);
+    report[6] = 0; // throttle released
+    report[8] = 0x08 | 0x10; // Square STILL HELD
+    M.lastRaceActivity = NowMs() - 4100;
+    ATOMIC_STORE(g_lastRaceActivityMs, NowMs() - 4100);
+    Send(report);
+    XState sHoldTimedOut = State();
+    Check((sHoldTimedOut.pad.wButtons & XB_A) != 0, "hold immunity: Square held across race timeout sustains XB_A");
+    Check((sHoldTimedOut.pad.wButtons & XB_X) == 0, "hold immunity: Square held across race timeout never leaks XB_X (no camera toggle)");
+
+    // Release Square after timeout:
+    Frame(report);
+    report[8] = 0x08; // released
+    Send(report);
+    XState sHoldReleased = State();
+    Check((sHoldReleased.pad.wButtons & (XB_A | XB_X)) == 0, "hold immunity: releasing held Square clears XB_A and XB_X");
+
+    // Now in menu mode, press Square fresh:
+    Frame(report);
+    report[8] = 0x08 | 0x10; // Square pressed in menu
+    Send(report);
+    XState sMenuAfterHold = State();
+    Check((sMenuAfterHold.pad.wButtons & XB_X) != 0, "hold immunity: re-pressing Square in menu mode sends XB_X (Details / Secondary)");
+    Check((sMenuAfterHold.pad.wButtons & XB_A) == 0, "hold immunity: re-pressing Square in menu mode does not send XB_A");
+    Frame(report);
+    report[8] = 0x08;
+    Send(report);
+
+    // --- 5. RACE -> MENU TIMEOUT TRANSITION IMMUNITY (Sustained L3 Hold) ---
+    ATOMIC_STORE(g_raceActive, 1);
+    M.inRaceState = true;
+    M.lastRaceActivity = NowMs();
+    Frame(report);
+    report[6] = 100;
+    report[9] = 0x40; // L3 click
+    Send(report);
+    XState sL3HoldStart = State();
+    Check((sL3HoldStart.pad.wButtons & XB_A) != 0, "hold immunity: L3 engages XB_A in race");
+    Check((sL3HoldStart.pad.wButtons & XB_L3) == 0, "hold immunity: L3 does not send XB_L3 in race");
+
+    // Idle for >4.0s while L3 is CONTINUOUSLY HELD:
+    Frame(report);
+    report[6] = 0;
+    report[9] = 0x40; // L3 STILL HELD
+    M.lastRaceActivity = NowMs() - 4100;
+    ATOMIC_STORE(g_lastRaceActivityMs, NowMs() - 4100);
+    Send(report);
+    XState sL3HoldTimedOut = State();
+    Check((sL3HoldTimedOut.pad.wButtons & XB_A) != 0, "hold immunity: L3 held across race timeout sustains XB_A");
+    Check((sL3HoldTimedOut.pad.wButtons & XB_L3) == 0, "hold immunity: L3 held across race timeout never leaks XB_L3");
+
+    // Release L3:
+    Frame(report);
+    report[9] = 0x00;
+    Send(report);
+    XState sL3HoldReleased = State();
+    Check((sL3HoldReleased.pad.wButtons & (XB_A | XB_L3)) == 0, "hold immunity: releasing held L3 clears XB_A and XB_L3");
+
+    // --- 6. IN-RACE ONLY DISABLED (InRaceOnly=0) ---
+    cfg.inRaceOnly = 0;
+    ATOMIC_STORE(g_raceActive, 0);
+    M.inRaceState = false;
+
+    // Square pressed with InRaceOnly=0 (no throttle, no rumble):
+    Frame(report);
+    report[8] = 0x08 | 0x10;
+    Send(report);
+    XState sSquareAlwaysRace = State();
+    Check((sSquareAlwaysRace.pad.wButtons & XB_A) != 0, "inRaceOnly=0: Square sends XB_A with zero throttle/rumble when InRaceOnly=0");
+    Check((sSquareAlwaysRace.pad.wButtons & XB_X) == 0, "inRaceOnly=0: Square suppresses XB_X when InRaceOnly=0");
+
+    // Cross pressed with InRaceOnly=0:
+    Frame(report);
+    report[8] = 0x08 | 0x20;
+    Send(report);
+    XState sCrossAlwaysRace = State();
+    Check((sCrossAlwaysRace.pad.wButtons & XB_A) != 0, "inRaceOnly=0: Cross sends XB_A when InRaceOnly=0");
+
+    // L3 pressed with InRaceOnly=0:
+    Frame(report);
+    report[9] = 0x40;
+    Send(report);
+    XState sL3AlwaysRace = State();
+    Check((sL3AlwaysRace.pad.wButtons & XB_A) != 0, "inRaceOnly=0: L3 sends XB_A when InRaceOnly=0");
+    Check((sL3AlwaysRace.pad.wButtons & XB_L3) == 0, "inRaceOnly=0: L3 does not send XB_L3 when InRaceOnly=0");
+
+    // Clean up
+    Frame(report);
+    Send(report);
+    cfg.inRaceOnly = 1;
+}
+
 int main()
 {
     g_inst = GetModuleHandleW(NULL);
@@ -488,6 +738,7 @@ int main()
     PINPOINT_MENU_TRIGGER_RECOVERY();
     PINPOINT_THROTTLE_VIBRATION_ROUTING();
     PINPOINT_ASYMMETRIC_RACK_DAMPENING();
+    PINPOINT_X_A_HANDBRAKE_MAPPING();
 
     if (g_wEvent) CloseHandle(g_wEvent);
     DeleteCriticalSection(&g_cs);
