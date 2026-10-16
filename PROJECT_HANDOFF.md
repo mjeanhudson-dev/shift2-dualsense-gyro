@@ -14,7 +14,7 @@
 | Invariant ID | Subsystem | Rule / Constraint | Rationale / Failure Mode Prevented |
 | :--- | :--- | :--- | :--- |
 | **INV-01** | **Gyro Fusion** | Ken Perlin $C^2$ Smootherstep Blend between $\omega_{\text{roll}}$ and $\omega_{\text{turn}}$ ($s(u) = u^3(10 - 15u + 6u^2)$) | Eliminates abrupt cutoff cliffs, dead spots, and flat-orientation axis cancellation. Proven zero conflict upright. |
-| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1Ã¢â€šÂ¬ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
+| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
 | **INV-03** | **Boot Centering** | Boot Horizon Zero ($M.center = 0.0^\circ$) unconditionally on startup | Anchors steering center strictly to true gravity horizon instead of desk tilt. Completely eliminates the "1mm cut-out / fling" artifact (+18,810 bias). |
 | **INV-04** | **Recline / Lap Anchor** | Gravity anchor bypassed when controller pitch $|\text{pitch}| > 30^\circ$ | Holding controller reclined on the lap does not violently collapse integrated gyro steering to $0^\circ$. |
 | **INV-05** | **Corner Hold Stability** | Time constant $\tau = 25.0\text{ s}$ when $|\theta_{\text{pred}} - \theta_{\text{center}}| > 5.0^\circ$ | Sustained high-speed cornering holds never collapse back to center during long sweeper turns. |
@@ -107,17 +107,17 @@ Earlier gyro steering prototypes suffered from two major flaws:
 
 ---
 
-### [HANDOFF-004] Rate-Driven Casiez 1Ã¢â€šÂ¬ Filter & Shortest Delta Angle Wrapping
+### [HANDOFF-004] Rate-Driven Casiez 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Filter & Shortest Delta Angle Wrapping
 - **Timestamp:** 2026-10-16T05:30:00Z
 - **Agent Identity:** DeepCoder
 - **Bounty ID:** `BOUNTY-VD-004`
 - **Status:** COMPLETED
 
 #### Scope & Problem Addressed:
-Traditional 1Ã¢â€šÂ¬ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
+Traditional 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
 
 #### Solution & Implementation:
-- Implemented rate-driven Casiez 1Ã¢â€šÂ¬ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
+- Implemented rate-driven Casiez 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
   $$f_c = f_{c,\min} + \beta |\omega_{\text{roll}}|$$
 - Implemented shortest branch-cut delta angle wrapping:
   $$\hat{\theta}_k = \text{Wrap}\left(\hat{\theta}_{k-1} + \alpha \text{Wrap}(\theta_k - \hat{\theta}_{k-1})\right)$$
@@ -313,10 +313,10 @@ Instead of fragile synthetic mocks, subagents and users needed a live, interacti
 #### Solution & Implementation:
 - Implemented [`gyro_workshop.cpp`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.cpp) compiling to standalone 32-bit binary [`gyro_workshop.exe`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.exe).
 - 5 comprehensive interactive operating modes:
-  1. `--stream`: Real-time interactive ASCII steering wheel (`[====|====]`), Left Stick `lx` percentage gauge, 1Ã¢â€šÂ¬ filter cutoff frequency $f_c$, gravity vector magnitude, pedal positions, and multi-touchpad coordinates.
+  1. `--stream`: Real-time interactive ASCII steering wheel (`[====|====]`), Left Stick `lx` percentage gauge, 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ filter cutoff frequency $f_c$, gravity vector magnitude, pedal positions, and multi-touchpad coordinates.
   2. `--calibrate [seconds]`: Stationary IMU calibration wizard sampling 250 reports/sec, calculating zero-rate gyro bias offsets $(\bar{\omega}_x, \bar{\omega}_y, \bar{\omega}_z)$ and gravity magnitude $\|g\|$, and prompting `[Y/N]` to save directly into `shift2_dualsense.ini`.
   3. `--test-deadzone`: Step-by-step breakout angle and lock measurement wizard with ASCII transfer curve.
-  4. `--test-jitter`: Noise floor standard deviation ($\sigma$) measurement across raw accelerometer, complementary fusion, and 1Ã¢â€šÂ¬ filter signals.
+  4. `--test-jitter`: Noise floor standard deviation ($\sigma$) measurement across raw accelerometer, complementary fusion, and 1ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ filter signals.
   5. `--sample [N]`: Headless N-sample telemetry snapshot for automated script verification.
 - Interactive hotkey controls (`[1]`-`[5]`, `[C]`, `[S]`, `[F]`, `[T]`, `[Q]`) for real-time parameter tuning (`MaxAngle`, `Deadzone`, `Curve`, `OneEuroMinCutoff`, `OneEuroBeta`, haptic pulses, and throttle vibration).
 - Verified and synchronized across Workspace, Desktop Staging, and Game Directory.
@@ -374,6 +374,37 @@ Forensic analysis of the "works in menu/showroom but cuts out after 1 millimeter
    - 126 of 126 PINPOINT checks pass (100% SUCCESS).
 5. **Deployment & Verification**:
    - Deployed and verified 100% SHA256 parity across Workspace, Desktop Staging, and Game Directory via `verify_repo.ps1 -Deploy -UpdateDocHashes`.
+
+---
+
+### [HANDOFF-017] Game Defaults Rollback & Wheel Subtype Non-Invasive Bypass
+- **Timestamp:** 2026-10-16T18:35:00Z
+- **Agent Identity:** Orchestrator (Argon / Boost)
+- **Bounty ID:** `BOUNTY-VD-017`
+- **Status:** COMPLETED
+
+#### Scope & Problem Addressed:
+Modifying the game's original controller XML files (`ControllerDefaults\PC\*.xml`) risks corrupting cloud sync or disrupting other players / controllers using standard gamepads. The user requested rolling back the game XML handling, dampening, and tuning to authentic game default values, while relying entirely on non-invasive Wheel Subtype Spoofing in the proxy to eliminate input delay.
+
+#### Solution & Implementation:
+1. **XML Controller Presets Restored to 100% Stock Game Defaults**:
+   - In all 5 PC presets in `ControllerDefaults\PC\` (`vehicleset_pc_xinput_default.xml`, `vehicleset_pc_xinput_analog.xml`, `vehicleset_pc_xinput_classic.xml`, `vehicleset_pc_xinput_drag.xml`, `vehicleset_pc_custom_pad.xml`):
+     - `DampeningEnabled="1"`
+     - `DampeningTimeCentreToLock="0.500000"`, `DampeningTimeLockToCentre="0.300000"`, `DampeningTimeOppositeLockToCentre="0.300000"`
+     - `NominalRiseDamping="0.950000"`, `NominalFallDamping="0.750000"`
+     - `TurnDeadzone="0.037500"`, `TurnSensitivity="0.250000"`
+     - `SpeedSensitiveSteering="1.000000"`, `AlternateSpeedSensitiveSteering="1.000000"`
+2. **Non-Invasive Wheel Subtype Bypass (`xinput_proxy.cpp`)**:
+   - `SpoofWheel=1` reports `XINPUT_DEVSUBTYPE_WHEEL` (`0x02`) dynamically to Shift 2.
+   - When Shift 2 identifies a wheel, the game engine automatically bypasses the gamepad XML presets, disables gamepad rise damping and speed-steering lockout, and runs pure 1:1 wheel rack kinematics.
+   - If a normal gamepad is connected without the proxy, the game runs with 100% stock default behavior.
+3. **Loading Screen 200 ms $C^2$ Smootherstep Auto-Ramp**:
+   - Added `g_loadRampStartMs` in `xinput_proxy.cpp`: detects loading pauses (`gap > 1200 ms`) and gently fades steering in over 200 ms using Ken Perlin's $C^2$ smootherstep upon entering the starting grid.
+4. **Verification & Parity**:
+   - Expanded PINPOINT verification suite to 132 checks (100% PASS).
+   - Byte-for-byte SHA256 parity confirmed across Workspace, Desktop Staging, and Game Directory.
+
+
 
 
 
