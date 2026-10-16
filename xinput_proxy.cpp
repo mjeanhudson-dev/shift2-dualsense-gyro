@@ -95,7 +95,7 @@ struct Config {
     // [Lean]
     int leanStart, leanInvert, leanMax, leanDead, leanStrength;
     // [Handling]
-    int handling, stickDead, gameDead, steerCurve, steerSat, steerLead, steerLeadMs, traction, tractionCut;
+    int handling, spoofWheel, stickDead, gameDead, steerCurve, steerSat, steerLead, steerLeadMs, traction, tractionCut;
     // [Controls]
     int inRaceOnly, raceTimeoutMs;
     int l3Handbrake, xHandbrake, psBtn;
@@ -114,7 +114,7 @@ static Config DefaultConfig()
 {
     Config c = {};
     c.motionStart = 1;  c.motionMode = 0;  c.motionInvert = 0;
-    c.motionMax = 75;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 50;
+    c.motionMax = 75;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 100;
     c.oneEuroMinCutoff = 120; c.oneEuroBeta = 40;
     c.gyroBiasX = 0.0f; c.gyroBiasY = 0.0f; c.gyroBiasZ = 0.0f;
     c.trig = 1;
@@ -133,7 +133,7 @@ static Config DefaultConfig()
     c.boot = 0;         c.playerLeds = 1;        c.micLed = 1;      c.ledFlip = 0;
     c.lightBaseRed = 128; c.lightBaseGreen = 0; c.lightBaseBlue = 255;
     c.leanStart = 0;    c.leanInvert = 0;        c.leanMax = 25;    c.leanDead = 3;  c.leanStrength = 100;
-    c.handling = 1;     c.stickDead = 3;         c.gameDead = 4;    c.steerCurve = 100; c.steerSat = 97;
+    c.handling = 0;     c.spoofWheel = 1;        c.stickDead = 3;   c.gameDead = 4;  c.steerCurve = 100; c.steerSat = 97;
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
     c.l3Handbrake = 1;  c.xHandbrake = 1;  c.psBtn = 1;
@@ -256,6 +256,7 @@ static void LoadConfig()
     cfg.leanStrength = Clamp(RD("Lean", "Strength", cfg.leanStrength), 0, 200);
 
     cfg.handling    = RD("Handling", "Enabled", cfg.handling);
+    cfg.spoofWheel  = RD("Handling", "SpoofWheel", RD("Controls", "SpoofWheel", cfg.spoofWheel));
     cfg.stickDead   = Clamp(RD("Handling", "StickDeadzone", cfg.stickDead), 0, 30);
     cfg.gameDead    = Clamp(RD("Handling", "GameDeadzone",  cfg.gameDead), 0, 40);
     cfg.steerCurve  = Clamp(RD("Handling", "Curve",         cfg.steerCurve), 50, 200);
@@ -1992,11 +1993,12 @@ __declspec(dllexport) DWORD WINAPI XInputGetCapabilities(DWORD idx, DWORD flags,
     if (idx == 0 && ATOMIC_LOAD(g_connected)) {
         memset(c, 0, sizeof *c);
         c->type = 1;        // XINPUT_DEVTYPE_GAMEPAD
-        c->subType = 1;     // XINPUT_DEVSUBTYPE_GAMEPAD
+        c->subType = cfg.spoofWheel ? 2 : 1;     // 2 = XINPUT_DEVSUBTYPE_WHEEL, 1 = XINPUT_DEVSUBTYPE_GAMEPAD
         c->pad.wButtons = 0xF3FF;
         c->pad.bLeftTrigger = c->pad.bRightTrigger = 0xFF;
         c->pad.lx = c->pad.ly = c->pad.rx = c->pad.ry = (SHORT)0xFFC0;
         c->vib.left = c->vib.right = 0xFF;
+        LOG_ONCE("XInputGetCapabilities reporting subType=%u (%s)", (unsigned)c->subType, cfg.spoofWheel ? "WHEEL" : "GAMEPAD");
         return ERROR_SUCCESS;
     }
     LoadReal();

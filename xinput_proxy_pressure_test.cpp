@@ -714,6 +714,70 @@ static void PINPOINT_X_A_HANDBRAKE_MAPPING()
     cfg.inRaceOnly = 1;
 }
 
+// ============================================================================
+// PINPOINT TEST 8: WHEEL SUBTYPE SPOOFING & ZERO-LAG 1:1 PASSTHROUGH
+// Root Cause: Shift 2 applies 500ms rise dampening and speed lockouts when
+// identifying as GAMEPAD (0x01). Spoofing WHEEL (0x02) bypasses all gamepad
+// dampening, unlocking raw 1:1 front rack steering.
+// Verification:
+// - SpoofWheel=1 returns XINPUT_DEVSUBTYPE_WHEEL (0x02) in XInputGetCapabilities.
+// - SpoofWheel=0 returns XINPUT_DEVSUBTYPE_GAMEPAD (0x01) in XInputGetCapabilities.
+// - All buttons, triggers, and vibration capabilities are fully reported.
+// - Smoothing=100 and Handling=0 delivers direct single-frame steering passthrough.
+// ============================================================================
+static void PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING()
+{
+    std::cout << "\n[PINPOINT 8/8] Running PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING...\n";
+
+    // 1. Verify SpoofWheel=1 reports XINPUT_DEVSUBTYPE_WHEEL (0x02)
+    cfg.spoofWheel = 1;
+    XCaps capsWheel = {};
+    DWORD resWheel = XInputGetCapabilities(0, 0, &capsWheel);
+    Check(resWheel == ERROR_SUCCESS, "wheel spoofing: XInputGetCapabilities returns ERROR_SUCCESS");
+    Check(capsWheel.type == 1, "wheel spoofing: type is XINPUT_DEVTYPE_GAMEPAD (1)");
+    Check(capsWheel.subType == 2, "wheel spoofing: subType is XINPUT_DEVSUBTYPE_WHEEL (2)");
+    Check(capsWheel.pad.wButtons == 0xF3FF, "wheel spoofing: full button mask 0xF3FF supported");
+    Check(capsWheel.pad.bLeftTrigger == 0xFF && capsWheel.pad.bRightTrigger == 0xFF, "wheel spoofing: full trigger range supported");
+    Check(capsWheel.vib.left == 0xFF && capsWheel.vib.right == 0xFF, "wheel spoofing: full vibration ranges supported");
+
+    // 2. Verify SpoofWheel=0 reports XINPUT_DEVSUBTYPE_GAMEPAD (0x01)
+    cfg.spoofWheel = 0;
+    XCaps capsPad = {};
+    DWORD resPad = XInputGetCapabilities(0, 0, &capsPad);
+    Check(resPad == ERROR_SUCCESS, "gamepad fallback: XInputGetCapabilities returns ERROR_SUCCESS");
+    Check(capsPad.subType == 1, "gamepad fallback: subType is XINPUT_DEVSUBTYPE_GAMEPAD (1)");
+
+    // Restore SpoofWheel default
+    cfg.spoofWheel = 1;
+
+    // 3. Verify Direct 1:1 Passthrough (Smoothing=100, Handling=0)
+    cfg.motionSmooth = 100;
+    cfg.handling = 0;
+    cfg.motionExpo = 100;
+    cfg.motionMax = 75;
+    cfg.motionDead = 1;
+
+    // Reset center and angle to 0
+    ResetMotion(0.0f);
+    M.center = 0.0f;
+    M.steerOutput = 0.0f;
+
+    // Apply immediate 30-degree tilt (target = (30 - 1) / (75 - 1) * 32767 = 29/74 * 32767 = ~12841)
+    M.cleanAngle = 30.0f;
+    int directTarget = Steer(M.cleanAngle);
+    int directOutput = SmoothSteer(directTarget, 0.004f);
+
+    Check(directOutput == directTarget, "zero-lag passthrough: SmoothSteer at Smoothing=100 returns exact target immediately");
+    Check((int)M.steerOutput == directTarget, "zero-lag passthrough: M.steerOutput updated to direct target in single frame");
+
+    // Verify negative steering (full lock -75 deg = -32767)
+    M.cleanAngle = -75.0f;
+    int lockTarget = Steer(M.cleanAngle);
+    int lockOutput = SmoothSteer(lockTarget, 0.004f);
+    Check(lockTarget == -32767, "zero-lag passthrough: -75 deg reaches full lock -32767");
+    Check(lockOutput == -32767, "zero-lag passthrough: -75 deg lock reached with zero delay");
+}
+
 int main()
 {
     g_inst = GetModuleHandleW(NULL);
@@ -739,6 +803,7 @@ int main()
     PINPOINT_THROTTLE_VIBRATION_ROUTING();
     PINPOINT_ASYMMETRIC_RACK_DAMPENING();
     PINPOINT_X_A_HANDBRAKE_MAPPING();
+    PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING();
 
     if (g_wEvent) CloseHandle(g_wEvent);
     DeleteCriticalSection(&g_cs);

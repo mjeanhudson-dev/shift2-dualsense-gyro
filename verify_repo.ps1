@@ -90,9 +90,9 @@ if ($SkipTests) {
 } elseif (Test-Path $testExe) {
     $output = & $testExe 2>&1
     $exitCode = $LASTEXITCODE
-    $passLine = $output | Select-String "All 114 PINPOINT verification checks passed"
+    $passLine = $output | Select-String "All \d+ PINPOINT verification checks passed"
     if ($exitCode -eq 0 -and $passLine) {
-        Write-Host "  [PASS] xinput_proxy_pressure_test.exe exited with 0 (All 114 checks passed 100%)" -ForegroundColor Green
+        Write-Host "  [PASS] xinput_proxy_pressure_test.exe exited with 0 ($($passLine.Matches[0].Value))" -ForegroundColor Green
     } else {
         Write-Host "  [FAIL] Pressure test failed or did not report 114 checks!" -ForegroundColor Red
         $output | Select-String -Pattern "FAIL|ERROR" | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }

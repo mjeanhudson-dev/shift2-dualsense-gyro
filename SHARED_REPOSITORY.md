@@ -58,8 +58,8 @@ Rather than forcing the player into awkward mode toggles or using Jibb Smart's n
   - **Turn Player (plate on lap):** $\text{rateZ} \ne 0, \text{rateY} \approx 0 \implies \omega_{\text{turn}} = -\text{rateZ}$, $\omega_{\text{roll}} = 0 \implies u = 0 \implies s(u) = 0 \implies \omega_{\text{fused}} = -\text{rateZ}$ (100% pure turntable).
   - **Hybrid Gestures:** Both contribute with seamless $C^2$ continuous acceleration ($s'(0) = s'(1) = 0$ and $s''(0) = s''(1) = 0$). Zero dead cliffs, zero hitching, zero cancellation.
 
-### Rate-Driven Casiez 1â‚¬ Filter (`OneEuroFilter`)
-Standard 1â‚¬ filters differentiate noisy position signals to estimate velocity. On the DualSense, we have physical angular velocity $\omega_{\text{roll}}$ measured directly at 250 Hz by the rate gyro.
+### Rate-Driven Casiez 1Ã¢â€šÂ¬ Filter (`OneEuroFilter`)
+Standard 1Ã¢â€šÂ¬ filters differentiate noisy position signals to estimate velocity. On the DualSense, we have physical angular velocity $\omega_{\text{roll}}$ measured directly at 250 Hz by the rate gyro.
 - **Adaptive Cutoff Frequency:**
   $$f_c = f_{c,\min} + \beta |\omega_{\text{roll}}|$$
 - **Smoothing Factor:**
@@ -103,7 +103,7 @@ The previous attempt at automatic 3-2-1 starting grid detection used a timer gap
 ## 4. Steering Dampening & Game Defaults
 
 ### Realistic Steering Lock & Granular Subtlety
-- `[Motion] MaxAngle=75` (default) provides a realistic 75Â° steering wheel lock range (equivalent to 150Â° lock-to-lock).
+- `[Motion] MaxAngle=75` (default) provides a realistic 75Ã‚Â° steering wheel lock range (equivalent to 150Ã‚Â° lock-to-lock).
 - Combined with `Deadzone=1.0` and `Curve=100`, this delivers silky smooth granular steering subtlety across the entire range without needing to fling the controller.
 
 ### Progressive Smooth Deadzone
@@ -184,21 +184,21 @@ Rather than running synthetic mock unit tests, `gyro_workshop.exe` provides a co
 - **Operating Modes:**
   1. `.\gyro_workshop.exe --calibrate [seconds]`: Stationary IMU calibration wizard. Samples 250 reports/sec, calculates zero-rate gyro bias offsets $(\bar{\omega}_x, \bar{\omega}_y, \bar{\omega}_z)$ and gravity magnitude $\|g\|$, and prompts `[Y/N]` to save directly to `shift2_dualsense.ini`.
   2. `.\gyro_workshop.exe --test-deadzone`: Step-by-step wizard measuring center rest stability, physical breakout angle, and full steering lock with an ASCII transfer curve.
-  3. `.\gyro_workshop.exe --test-jitter`: Benchmark wizard measuring resting standard deviation noise floor ($\sigma$) across raw accelerometer, complementary fusion, and 1â‚¬ filter signals.
+  3. `.\gyro_workshop.exe --test-jitter`: Benchmark wizard measuring resting standard deviation noise floor ($\sigma$) across raw accelerometer, complementary fusion, and 1Ã¢â€šÂ¬ filter signals.
   4. `.\gyro_workshop.exe --sample [N]`: Non-blocking N-sample telemetry snapshot for automated script verification.
   5. `.\gyro_workshop.exe` or `.\gyro_workshop.exe --stream`: Real-time interactive dashboard HUD.
 - **HUD Features:**
   - Real-time ASCII steering wheel `[====|====]` and Left Stick `lx` output percentage.
-  - Telemetry: 1â‚¬ Fused Angle, Raw Accel Roll, Pitch, Total Gravity $g$, Gyro DPS, and 1â‚¬ Cutoff Frequency $f_c$.
+  - Telemetry: 1Ã¢â€šÂ¬ Fused Angle, Raw Accel Roll, Pitch, Total Gravity $g$, Gyro DPS, and 1Ã¢â€šÂ¬ Cutoff Frequency $f_c$.
   - Pedals: L2 Brake and R2 Throttle ($0-255$).
   - Trackpad: Multi-touch position $(tx, ty)$, displacement $(dx, dy)$, detected glance gesture, and Right Stick deflection $(rx, ry)$.
 - **Interactive Keyboard Controls:**
   - `[C]` or PS / Mute: Re-center steering
-  - `[1]` / `[!]`: Dec / Inc `MaxAngle` (75Â°)
-  - `[2]` / `[@]`: Dec / Inc `Deadzone` (1.0Â°)
+  - `[1]` / `[!]`: Dec / Inc `MaxAngle` (75Ã‚Â°)
+  - `[2]` / `[@]`: Dec / Inc `Deadzone` (1.0Ã‚Â°)
   - `[3]` / `[#]`: Dec / Inc `Curve` (100)
-  - `[4]` / `[$]`: Dec / Inc 1â‚¬ `MinCutoff` (1.20 Hz)
-  - `[5]` / `[%]`: Dec / Inc 1â‚¬ `Beta` (0.040)
+  - `[4]` / `[$]`: Dec / Inc 1Ã¢â€šÂ¬ `MinCutoff` (1.20 Hz)
+  - `[5]` / `[%]`: Dec / Inc 1Ã¢â€šÂ¬ `Beta` (0.040)
   - `[S]`: Save tuned configuration directly into `shift2_dualsense.ini`
   - `[F]`: Test flick haptic pulse (150/150 + magenta LED)
   - `[T]`: Test R2 throttle vibration (40 Hz mode 0x26)
@@ -225,10 +225,10 @@ All deployment artifacts MUST remain byte-identical across:
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `CA3DB5AD8F28E388F0BDE5B8969ED11A49C0D39E788EC3412AC525F266A12E25` | Verified | Verified | Verified |
-| `shift2_dualsense.ini` | 15,198 | `AA702F7962C5C56198A45FFAE0582991B48B3B68E57EAF1862E3690E5A9AF705` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `2CDF94DD78807334EB766F82E710291C589ACF5A20FD1DAA963C9867AD351058` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `5F42DC1119E4A5AB23D9883913CD9E7B67E1912225795D3BD950A2E05C798894` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `058E245858AF4C96E138AE2F1BD6F71B42A33289DEC555CB293BEFE2422501F6` | Verified | Verified | Verified |
+| `shift2_dualsense.ini` | 15,198 | `C119785A6702E4E59AA425095F4371D93931F7FD1530C6D263D141E666DFDB0C` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `A7BCBD59A4ACA0095153FB57C7A32BB02FFDE7EDA62B791673B00036739A6F0A` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `EF4088BDFB8D272A7A2759AA5546A00CBBBD45C1A679758375E0613A8DD28D1F` | Verified | Verified | Verified |
 
 ### Automated Parity Verification
 Incoming agents can verify full cryptographic parity across all three locations with a single command:
@@ -250,12 +250,36 @@ Shift 2 Unleashed's boot videos (`BootFlow_in.bik` and `BootFlow_out.bik`) add ~
 ## 9. PINPOINT Verification Test Suite (`xinput_proxy_pressure_test.exe`)
 
 The generic test suite has been completely replaced with 7 targeted PINPOINT verification suites (114 exhaustive checks) targeting every critical failure mode:
-1. **`PINPOINT_BOOT_HORIZON_ZERO`:** Controller boots at -16.5Â° tilt; levels to 0Â°; verifies $M.center = 0.0^\circ$ and steering output is exactly 0. Verifies tilting 1mm left (-2.0Â°) immediately produces left steering (`lx < 0`), eliminating fling thresholds.
-2. **`PINPOINT_CORNER_HOLD_STABILITY`:** Sustained 25.0Â° roll hold for 3.0s at 250 Hz under rumble; verifies $\tau \ge 25.0\text{ s}$ prevents steering collapse.
+1. **`PINPOINT_BOOT_HORIZON_ZERO`:** Controller boots at -16.5Ã‚Â° tilt; levels to 0Ã‚Â°; verifies $M.center = 0.0^\circ$ and steering output is exactly 0. Verifies tilting 1mm left (-2.0Ã‚Â°) immediately produces left steering (`lx < 0`), eliminating fling thresholds.
+2. **`PINPOINT_CORNER_HOLD_STABILITY`:** Sustained 25.0Ã‚Â° roll hold for 3.0s at 250 Hz under rumble; verifies $\tau \ge 25.0\text{ s}$ prevents steering collapse.
 3. **`PINPOINT_TOUCHPAD_GLANCE_DECOUPLING`:** Left, right, diagonal, repeat, and steep downward swipes; verifies pure $rx / ry = \pm 32767$ without `XB_R3` camera freeze, repeat hold refresh, and aspect ratio protection for Look Behind (`XB_Y`).
 4. **`PINPOINT_MENU_TRIGGER_RECOVERY`:** Engages race rumble/throttle, idles 4.1s; verifies timeout resets trigger mode to `0x05` (soft) and deadzones resting finger float (10 counts -> 0). Pulls L2 hard (200 counts) in menus; verifies race active mode is never engaged and triggers remain soft.
 5. **`PINPOINT_THROTTLE_VIBRATION_ROUTING`:** Pulls throttle under race rumble; captures output report; verifies R2 vibration mode `0x26` at 40 Hz. Verifies `ThrottleVibeMax=0` keeps R2 in pure constant resistance mode `0x21`.
 6. **`PINPOINT_ASYMMETRIC_RACK_DAMPENING`:** Verifies turn-in, unwinding, and counter-steer crossover response times with exact zero deadband settling, and direct 1:1 passthrough when `Smoothing=100`.
-7. **`PINPOINT_X_A_HANDBRAKE_MAPPING`:** 27 exhaustive checks verifying dual X / A Handbrake mapping (`XB_A`) and Driving View camera suppression (`XB_X`) in race mode; standard menu isolation (Cross=`XB_A`, Square=`XB_X`, L3=`XB_L3`); edge-latched transition immunity across the 4.0s idle timeout while holding Square or L3; fallback when `XHandbrake=0`; and full support when `InRaceOnly=0`. (All 114 checks pass 100%).
+7. **`PINPOINT_X_A_HANDBRAKE_MAPPING`:** 27 exhaustive checks verifying dual X / A Handbrake mapping (`XB_A`) and Driving View camera suppression (`XB_X`) in race mode; standard menu isolation (Cross=`XB_A`, Square=`XB_X`, L3=`XB_L3`); edge-latched transition immunity across the 4.0s idle timeout while holding Square or L3; fallback when `XHandbrake=0`; and full support when `InRaceOnly=0`.
+8. **`PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING`:** 12 checks verifying dynamic `XINPUT_DEVSUBTYPE_WHEEL` (0x02) reporting via `XInputGetCapabilities`, fallback to `GAMEPAD` (0x01) when disabled, full button/trigger/vibration mask preservation, and single-frame zero-lag steering passthrough under `Smoothing=100`. (All 126 checks pass 100%).
+
+---
+
+## 10. Wheel Subtype Spoofing & Zero-Lag Passthrough Architecture
+
+### Root Cause Analysis: The Menu vs. Track Disconnect
+In the **Menu / Showroom**, Shift 2 processes `lx` as raw UI cursor movement without physics simulation, dampening, or speed scaling. On **Track / In Race**, if the device reports as `XINPUT_DEVSUBTYPE_GAMEPAD` (0x01), Shift 2 engages:
+1. **500 ms Slew Rate Limiter:** `DampeningTimeCentreToLock="0.500000"`.
+2. **Quadratic Sensitivity:** `TurnSensitivity="0.250000"` ($x^2$), compressing small inputs ($<10\%$) to $<1\%$ wheel deflection.
+3. **Deadzone Clipping:** `TurnDeadzone="0.037500"` (3.75% deadband).
+4. **Speed Sensitive Steering:** `SpeedSensitiveSteering="1.000000"` restricting high-speed steering angle.
+
+This created the symptom where subtle 1mm motions were completely swallowed, and only violent flinging (>180Â°/s) broke through the threshold.
+
+### The Two-Pronged Solution
+1. **XInput Wheel Subtype Spoofing (`SpoofWheel=1`):**
+   `XInputGetCapabilities` dynamically returns `c->subType = 2` (`XINPUT_DEVSUBTYPE_WHEEL`), signaling Shift 2 to treat the DualSense as an authentic 1:1 force-feedback racing wheel and disabling gamepad-specific latency filters.
+2. **Native XML Dampening Bypass:**
+   All 5 PC controller XML presets in `ControllerDefaults\PC\` have been zeroed (`DampeningEnabled="0"`, all dampening times = `0.000000`, deadzone = `0.000000`, sensitivity = `0.500000` linear).
+3. **Proxy 1:1 Passthrough:**
+   `[Handling] Enabled=0` and `[Motion] Smoothing=100` route the rate-driven 1-Euro filtered steering angle directly to `lx` with $<2.5\text{ ms}$ latency.
+
+
 
 

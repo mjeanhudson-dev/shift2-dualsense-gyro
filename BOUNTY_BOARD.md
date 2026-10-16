@@ -46,7 +46,8 @@ Incoming agents can search across projects using these domain tags:
 | **`BOUNTY-VD-013`** | Targeted PINPOINT Verification Test Suite (114 Exhaustive Checks) | `COMPLETED` | Subagent DeepCoder | 2026-10-16 / 2026-10-16 | `#pinpoint-test-harness` | All VD Bounties | [`xinput_proxy_pressure_test.exe`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/xinput_proxy_pressure_test.cpp) (100% Pass) | [`HANDOFF-013`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md#handoff-013-targeted-pinpoint-verification-test-suite-114-checks) |
 | **`BOUNTY-VD-014`** | Interactive DualSense Workshop Suite & Live Calibration HUD | `COMPLETED` | Subagent DeepCoder | 2026-10-16 / 2026-10-16 | `#telemetry-visualizer`, `#hardware-hid-dualsense` | `BOUNTY-VD-001` | [`gyro_workshop.exe`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.cpp) (5 modes) | [`HANDOFF-014`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md#handoff-014-interactive-dualsense-workshop-suite--live-calibration-hud) |
 | **`BOUNTY-GL-015`** | Multi-Agent Knowledge Repository & Universal Handoff Architecture | `COMPLETED` | Subagent Coding Worker (`7279ff73`) | 2026-10-16 / 2026-10-16 | `#multiagent-architecture` | All Bounties | [`BOUNTY_BOARD.md`](file:///c:/Users/Zachariah/Documents/antigravity/BOUNTY_BOARD.md), [`MULTIAGENT_PROTOCOLS.md`](file:///c:/Users/Zachariah/Documents/antigravity/MULTIAGENT_PROTOCOLS.md), [`GLOBAL_KNOWLEDGE_INDEX.md`](file:///c:/Users/Zachariah/Documents/antigravity/GLOBAL_KNOWLEDGE_INDEX.md), [`PROJECT_HANDOFF.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md) | [`HANDOFF-015`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md#handoff-015-multi-agent-knowledge-repository--universal-handoff-architecture) |
-| **`BOUNTY-VD-016`** | Real-time In-Game Telemetry Overlay / OSD for Motion Steering Diagnostics | `OPEN` | Unassigned | Open for Claim | `#telemetry-visualizer`, `#game-modding-shift2` | `BOUNTY-VD-014` | DirectX 9 Hook or External Overlay | TBD |
+| **`BOUNTY-VD-016`** | Wheel Subtype Spoofing (0x02), XML Zero-Dampening & Zero-Lag Passthrough | `COMPLETED` | Subagent DeepCoder & DeepInvestigator | 2026-10-16 / 2026-10-16 | `#game-modding-shift2`, `#xinput-hook-proxy` | All VD Bounties | [`xinput1_3.dll`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/xinput1_3.dll) (126 checks) | [`HANDOFF-016`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md#handoff-016-wheel-subtype-spoofing-0x02--zero-lag-passthrough) |
+| **`BOUNTY-VD-017`** | Real-time In-Game Telemetry Overlay / OSD for Motion Steering Diagnostics | `OPEN` | Unassigned | Open for Claim | `#telemetry-visualizer`, `#game-modding-shift2` | `BOUNTY-VD-014` | DirectX 9 Hook or External Overlay | TBD |
 
 
 ---
@@ -55,7 +56,7 @@ Incoming agents can search across projects using these domain tags:
 
 1. Read [`SHARED_REPOSITORY.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/SHARED_REPOSITORY.md) and [`PROJECT_HANDOFF.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md) before writing code.
 2. Mark your bounty as `CLAIMED` in this table.
-3. Keep the 12 Locked Invariants intact.
-4. Run `.\xinput_proxy_pressure_test.exe` and verify all 114 checks pass 100%.
+3. Keep the 13 Locked Invariants intact.
+4. Run `.\xinput_proxy_pressure_test.exe` and verify all 126 checks pass 100%.
 5. Run `powershell -ExecutionPolicy Bypass -File .\verify_repo.ps1` to verify file parity across Workspace, Desktop Staging, and Game Directory.
 6. Append a handoff entry to [`PROJECT_HANDOFF.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md).

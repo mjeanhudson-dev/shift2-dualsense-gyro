@@ -14,7 +14,7 @@
 | Invariant ID | Subsystem | Rule / Constraint | Rationale / Failure Mode Prevented |
 | :--- | :--- | :--- | :--- |
 | **INV-01** | **Gyro Fusion** | Ken Perlin $C^2$ Smootherstep Blend between $\omega_{\text{roll}}$ and $\omega_{\text{turn}}$ ($s(u) = u^3(10 - 15u + 6u^2)$) | Eliminates abrupt cutoff cliffs, dead spots, and flat-orientation axis cancellation. Proven zero conflict upright. |
-| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1â‚¬ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
+| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1Ã¢â€šÂ¬ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
 | **INV-03** | **Boot Centering** | Boot Horizon Zero ($M.center = 0.0^\circ$) unconditionally on startup | Anchors steering center strictly to true gravity horizon instead of desk tilt. Completely eliminates the "1mm cut-out / fling" artifact (+18,810 bias). |
 | **INV-04** | **Recline / Lap Anchor** | Gravity anchor bypassed when controller pitch $|\text{pitch}| > 30^\circ$ | Holding controller reclined on the lap does not violently collapse integrated gyro steering to $0^\circ$. |
 | **INV-05** | **Corner Hold Stability** | Time constant $\tau = 25.0\text{ s}$ when $|\theta_{\text{pred}} - \theta_{\text{center}}| > 5.0^\circ$ | Sustained high-speed cornering holds never collapse back to center during long sweeper turns. |
@@ -24,7 +24,8 @@
 | **INV-09** | **Menu Isolation** | L2/R2 15-count deadzone in menus; L2 never latches race active mode | Prevents resting finger float (7-12 counts) from scrolling menus; prevents heavy race brake resistance or ABS judder in menu screens. |
 | **INV-10** | **Rack Dampening** | Asymmetric weighted rack physics (`Smoothing=50`) | $108\text{ ms}$ turn-in, $63\text{ ms}$ caster unwind, $40.5\text{ ms}$ slide counter-steer. Direct 1:1 passthrough on `Smoothing=100`. |
 | **INV-11** | **Startup Speed** | Intro cinematic removal (`BootFlow_in/out.bik.bak`) | Shift 2 launches directly to title screen in under 2 seconds. |
-| **INV-12** | **Test Integrity** | 114 PINPOINT checks must pass 100% on every build (`xinput_proxy_pressure_test.exe`) | Exhaustively verifies all 7 critical subsystems. Never replace with unverified synthetic mock bloat. |
+| **INV-12** | **Test Integrity** | 126 PINPOINT checks must pass 100% on every build (`xinput_proxy_pressure_test.exe`) | Exhaustively verifies all 8 critical subsystems. Never replace with unverified synthetic mock bloat. |
+| **INV-13** | **Wheel Spoofing** | Dynamic Wheel Subtype Spoofing (`XINPUT_DEVSUBTYPE_WHEEL` = 0x02 via `SpoofWheel=1`) and Game XML Dampening Bypass | Bypasses Shift 2's hardcoded 500ms gamepad rise dampening (`DampeningTimeCentreToLock`), speed-sensitive steering lockout, and quadratic $x^2$ sensitivity compression, restoring true 1:1 raw steering rack response. |
 
 ---
 
@@ -39,10 +40,10 @@ All deployment artifacts MUST remain byte-identical across the three operational
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `CA3DB5AD8F28E388F0BDE5B8969ED11A49C0D39E788EC3412AC525F266A12E25` | Verified | Verified | Verified |
-| `shift2_dualsense.ini` | 15,198 | `AA702F7962C5C56198A45FFAE0582991B48B3B68E57EAF1862E3690E5A9AF705` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `2CDF94DD78807334EB766F82E710291C589ACF5A20FD1DAA963C9867AD351058` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `5F42DC1119E4A5AB23D9883913CD9E7B67E1912225795D3BD950A2E05C798894` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `058E245858AF4C96E138AE2F1BD6F71B42A33289DEC555CB293BEFE2422501F6` | Verified | Verified | Verified |
+| `shift2_dualsense.ini` | 15,198 | `C119785A6702E4E59AA425095F4371D93931F7FD1530C6D263D141E666DFDB0C` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `A7BCBD59A4ACA0095153FB57C7A32BB02FFDE7EDA62B791673B00036739A6F0A` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `EF4088BDFB8D272A7A2759AA5546A00CBBBD45C1A679758375E0613A8DD28D1F` | Verified | Verified | Verified |
 
 ---
 
@@ -106,17 +107,17 @@ Earlier gyro steering prototypes suffered from two major flaws:
 
 ---
 
-### [HANDOFF-004] Rate-Driven Casiez 1â‚¬ Filter & Shortest Delta Angle Wrapping
+### [HANDOFF-004] Rate-Driven Casiez 1Ã¢â€šÂ¬ Filter & Shortest Delta Angle Wrapping
 - **Timestamp:** 2026-10-16T05:30:00Z
 - **Agent Identity:** DeepCoder
 - **Bounty ID:** `BOUNTY-VD-004`
 - **Status:** COMPLETED
 
 #### Scope & Problem Addressed:
-Traditional 1â‚¬ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
+Traditional 1Ã¢â€šÂ¬ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
 
 #### Solution & Implementation:
-- Implemented rate-driven Casiez 1â‚¬ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
+- Implemented rate-driven Casiez 1Ã¢â€šÂ¬ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
   $$f_c = f_{c,\min} + \beta |\omega_{\text{roll}}|$$
 - Implemented shortest branch-cut delta angle wrapping:
   $$\hat{\theta}_k = \text{Wrap}\left(\hat{\theta}_{k-1} + \alpha \text{Wrap}(\theta_k - \hat{\theta}_{k-1})\right)$$
@@ -312,10 +313,10 @@ Instead of fragile synthetic mocks, subagents and users needed a live, interacti
 #### Solution & Implementation:
 - Implemented [`gyro_workshop.cpp`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.cpp) compiling to standalone 32-bit binary [`gyro_workshop.exe`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.exe).
 - 5 comprehensive interactive operating modes:
-  1. `--stream`: Real-time interactive ASCII steering wheel (`[====|====]`), Left Stick `lx` percentage gauge, 1â‚¬ filter cutoff frequency $f_c$, gravity vector magnitude, pedal positions, and multi-touchpad coordinates.
+  1. `--stream`: Real-time interactive ASCII steering wheel (`[====|====]`), Left Stick `lx` percentage gauge, 1Ã¢â€šÂ¬ filter cutoff frequency $f_c$, gravity vector magnitude, pedal positions, and multi-touchpad coordinates.
   2. `--calibrate [seconds]`: Stationary IMU calibration wizard sampling 250 reports/sec, calculating zero-rate gyro bias offsets $(\bar{\omega}_x, \bar{\omega}_y, \bar{\omega}_z)$ and gravity magnitude $\|g\|$, and prompting `[Y/N]` to save directly into `shift2_dualsense.ini`.
   3. `--test-deadzone`: Step-by-step breakout angle and lock measurement wizard with ASCII transfer curve.
-  4. `--test-jitter`: Noise floor standard deviation ($\sigma$) measurement across raw accelerometer, complementary fusion, and 1â‚¬ filter signals.
+  4. `--test-jitter`: Noise floor standard deviation ($\sigma$) measurement across raw accelerometer, complementary fusion, and 1Ã¢â€šÂ¬ filter signals.
   5. `--sample [N]`: Headless N-sample telemetry snapshot for automated script verification.
 - Interactive hotkey controls (`[1]`-`[5]`, `[C]`, `[S]`, `[F]`, `[T]`, `[Q]`) for real-time parameter tuning (`MaxAngle`, `Deadzone`, `Curve`, `OneEuroMinCutoff`, `OneEuroBeta`, haptic pulses, and throttle vibration).
 - Verified and synchronized across Workspace, Desktop Staging, and Game Directory.
@@ -344,6 +345,37 @@ Subagents were conflicting, duplicating analysis, and inflating synthetic tests.
   - `verify_repo.ps1`: Automated PowerShell script verifying 114 PINPOINT checks, SHA256 binary parity across Workspace, Desktop Staging, and Game Directory, and repo file integrity.
 - Verified 100% SHA256 binary parity across Workspace, Desktop Staging, and Game Directory.
 - Verified 114/114 PINPOINT test pass.
+
+---
+
+### [HANDOFF-016] Wheel Subtype Spoofing (0x02) & Zero-Lag Passthrough
+- **Timestamp:** 2026-10-16T17:30:00Z
+- **Agent Identity:** DeepCoder & DeepInvestigator
+- **Bounty ID:** `BOUNTY-VD-016`
+- **Status:** COMPLETED
+
+#### Scope & Problem Addressed:
+Forensic analysis of the "works in menu/showroom but cuts out after 1 millimeter on track, requiring violent flinging" issue revealed that Shift 2 Unleashed applies heavy gamepad-only dampening (`DampeningTimeCentreToLock="0.500000"`), a quadratic sensitivity curve ($x^2$), and speed-sensitive steering lockout whenever a controller identifies as `XINPUT_DEVSUBTYPE_GAMEPAD` (0x01). In contrast, menus process raw cursor input with zero physics damping.
+
+#### Solution & Implementation:
+1. **Dynamic Wheel Subtype Spoofing (`xinput_proxy.cpp`)**:
+   - Added `cfg.spoofWheel` to `Config` (default 1) and `LoadConfig()`.
+   - In `XInputGetCapabilities()`: dynamically returns `c->subType = cfg.spoofWheel ? 2 : 1;` (`2 = XINPUT_DEVSUBTYPE_WHEEL`, `1 = XINPUT_DEVSUBTYPE_GAMEPAD`).
+   - Signal: Shift 2 treats the DualSense as a true racing wheel, disabling gamepad-specific latency filters.
+2. **Game XML Dampening Elimination**:
+   - Zeroed built-in dampening, deadzones, and linearized sensitivity across all 5 PC controller XML presets in `C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\ControllerDefaults\PC\`:
+     `DampeningEnabled="0"`, `DampeningTimeCentreToLock="0.000000"`, `DampeningTimeLockToCentre="0.000000"`, `TurnDeadzone="0.000000"`, `TurnSensitivity="0.500000"`.
+3. **Zero-Lag Passthrough Profile (`shift2_dualsense.ini`)**:
+   - Configured `[Handling] SpoofWheel=1` and `Enabled=0` (bypass proxy input shaping).
+   - Configured `[Motion] Smoothing=100` (zero proxy delay) and `MaxAngle=75` (authentic wheel lock).
+4. **PINPOINT Test Suite Expansion (`xinput_proxy_pressure_test.cpp`)**:
+   - Added Module 8: `PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING` (12 checks).
+   - Verifies `subType == 2` when spoofing enabled and `1` when disabled; verifies immediate single-frame steering passthrough at `Smoothing=100`.
+   - 126 of 126 PINPOINT checks pass (100% SUCCESS).
+5. **Deployment & Verification**:
+   - Deployed and verified 100% SHA256 parity across Workspace, Desktop Staging, and Game Directory via `verify_repo.ps1 -Deploy -UpdateDocHashes`.
+
+
 
 
 
