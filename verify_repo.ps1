@@ -10,11 +10,21 @@
        - Workspace: c:\Users\Zachariah\Documents\antigravity\vibrant-darwin\
        - Desktop Staging: C:\Users\Zachariah\Desktop\Shift2\
        - Game Directory: C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\
+    
+    Optional Actions:
+    - Deploy: Atomically copies binaries and docs to Desktop Staging & Game Directory.
+    - UpdateDocHashes: Replaces SHA256 hashes in PROJECT_HANDOFF.md and SHARED_REPOSITORY.md with live workspace hashes.
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$SyncDesktopDocs = $true
+    [switch]$SyncDesktopDocs = $true,
+    [switch]$Deploy = $false,
+    [switch]$UpdateDocHashes = $false,
+    [switch]$SkipTests = $false,
+    [string]$WorkspacePath = "",
+    [string]$DesktopStagingPath = "",
+    [string]$GameDirPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,10 +34,12 @@ Write-Host "=== Antigravity Multi-Agent Repository Verification Tool ===" -Foreg
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$workspace = "c:\Users\Zachariah\Documents\antigravity\vibrant-darwin"
-$globalRoot = "c:\Users\Zachariah\Documents\antigravity"
-$desktopStaging = "C:\Users\Zachariah\Desktop\Shift2"
-$gameDir = "C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed"
+$workspace = if ($WorkspacePath) { $WorkspacePath } elseif ($PSScriptRoot) { $PSScriptRoot } else { "c:\Users\Zachariah\Documents\antigravity\vibrant-darwin" }
+$globalRoot = Split-Path -Path $workspace -Parent
+if (-not $globalRoot) { $globalRoot = "c:\Users\Zachariah\Documents\antigravity" }
+
+$desktopStaging = if ($DesktopStagingPath) { $DesktopStagingPath } else { "C:\Users\Zachariah\Desktop\Shift2" }
+$gameDir = if ($GameDirPath) { $GameDirPath } else { "C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed" }
 
 $allPassed = $true
 
@@ -40,8 +52,17 @@ $repoFiles = @(
     (Join-Path $workspace "MULTIAGENT_PROTOCOLS.md"),
     (Join-Path $globalRoot "BOUNTY_BOARD.md"),
     (Join-Path $globalRoot "MULTIAGENT_PROTOCOLS.md"),
-    (Join-Path $globalRoot "GLOBAL_KNOWLEDGE_INDEX.md")
+    (Join-Path $globalRoot "GLOBAL_KNOWLEDGE_INDEX.md"),
+    (Join-Path $globalRoot "init_project_repo.ps1")
 )
+
+# Also check excited-hertz if directory exists
+$excitedHertzDir = Join-Path $globalRoot "excited-hertz"
+if (Test-Path $excitedHertzDir) {
+    $repoFiles += (Join-Path $excitedHertzDir "BOUNTY_BOARD.md")
+    $repoFiles += (Join-Path $excitedHertzDir "PROJECT_HANDOFF.md")
+    $repoFiles += (Join-Path $excitedHertzDir "MULTIAGENT_PROTOCOLS.md")
+}
 
 foreach ($file in $repoFiles) {
     if (Test-Path $file) {
@@ -62,7 +83,9 @@ Write-Host ""
 # 2. Run PINPOINT Pressure Test Suite
 Write-Host "[CHECK 2/3] Executing 114 PINPOINT Test Suite (xinput_proxy_pressure_test.exe)..." -ForegroundColor Yellow
 $testExe = Join-Path $workspace "xinput_proxy_pressure_test.exe"
-if (Test-Path $testExe) {
+if ($SkipTests) {
+    Write-Host "  [SKIP] Test suite execution skipped via -SkipTests" -ForegroundColor DarkYellow
+} elseif (Test-Path $testExe) {
     $output = & $testExe 2>&1
     $exitCode = $LASTEXITCODE
     $passLine = $output | Select-String "All 114 PINPOINT verification checks passed"
@@ -79,8 +102,7 @@ if (Test-Path $testExe) {
 }
 Write-Host ""
 
-# 3. Cryptographic SHA256 Parity Verification
-Write-Host "[CHECK 3/3] Verifying SHA256 Parity Across Workspace, Desktop & Game..." -ForegroundColor Yellow
+# Optional: Atomic Deployment before parity check if requested
 $artifacts = @(
     "xinput1_3.dll",
     "shift2_dualsense.ini",
@@ -88,13 +110,48 @@ $artifacts = @(
     "xinput_proxy_pressure_test.exe"
 )
 
-$dirs = @{
-    "Workspace" = $workspace
-    "Desktop Staging" = $desktopStaging
-    "Game Directory" = $gameDir
+$docs = @(
+    "SHARED_REPOSITORY.md",
+    "PROJECT_HANDOFF.md",
+    "BOUNTY_BOARD.md",
+    "MULTIAGENT_PROTOCOLS.md",
+    "verify_repo.ps1"
+)
+
+if ($Deploy) {
+    Write-Host "[DEPLOY] Performing atomic deployment across Staging & Game Directory..." -ForegroundColor Cyan
+    foreach ($dest in @($desktopStaging, $gameDir)) {
+        if (Test-Path $dest) {
+            Write-Host "  Deploying to $dest..." -ForegroundColor Cyan
+            foreach ($art in $artifacts) {
+                $src = Join-Path $workspace $art
+                if (Test-Path $src) {
+                    Copy-Item -Path $src -Destination $dest -Force
+                    Write-Host "    Copied $art" -ForegroundColor DarkGray
+                }
+            }
+            foreach ($doc in $docs) {
+                $src = Join-Path $workspace $doc
+                if (Test-Path $src) {
+                    Copy-Item -Path $src -Destination $dest -Force
+                    Write-Host "    Copied $doc" -ForegroundColor DarkGray
+                }
+            }
+            $globalKnowledge = Join-Path $globalRoot "GLOBAL_KNOWLEDGE_INDEX.md"
+            if (Test-Path $globalKnowledge) {
+                Copy-Item -Path $globalKnowledge -Destination $dest -Force
+                Write-Host "    Copied GLOBAL_KNOWLEDGE_INDEX.md" -ForegroundColor DarkGray
+            }
+        }
+    }
+    Write-Host ""
 }
 
+# 3. Cryptographic SHA256 Parity Verification
+Write-Host "[CHECK 3/3] Verifying SHA256 Parity Across Workspace, Desktop & Game..." -ForegroundColor Yellow
+
 $parityTable = @()
+$liveHashes = @{}
 
 foreach ($artifact in $artifacts) {
     $wsPath = Join-Path $workspace $artifact
@@ -104,6 +161,7 @@ foreach ($artifact in $artifacts) {
         continue
     }
     $wsHash = (Get-FileHash -Path $wsPath -Algorithm SHA256).Hash
+    $liveHashes[$artifact] = $wsHash
 
     $stPath = Join-Path $desktopStaging $artifact
     $gmPath = Join-Path $gameDir $artifact
@@ -137,9 +195,33 @@ foreach ($artifact in $artifacts) {
 Write-Host ""
 $parityTable | Format-Table -AutoSize
 
-# Optional: Sync documentation to Desktop Staging & Game Directory
-if ($SyncDesktopDocs) {
-    $docs = @("SHARED_REPOSITORY.md", "PROJECT_HANDOFF.md", "BOUNTY_BOARD.md", "MULTIAGENT_PROTOCOLS.md", "verify_repo.ps1")
+# Optional: Update SHA256 tables in documentation if requested
+if ($UpdateDocHashes) {
+    Write-Host "[DOCS] Updating SHA256 checksums in PROJECT_HANDOFF.md and SHARED_REPOSITORY.md..." -ForegroundColor Cyan
+    $docFiles = @(
+        (Join-Path $workspace "PROJECT_HANDOFF.md"),
+        (Join-Path $workspace "SHARED_REPOSITORY.md")
+    )
+    foreach ($docFile in $docFiles) {
+        if (Test-Path $docFile) {
+            $content = Get-Content -Path $docFile -Raw
+            foreach ($art in $artifacts) {
+                $hash = $liveHashes[$art]
+                if ($hash) {
+                    $pattern = '(\|\s*`' + [regex]::Escape($art) + '`\s*\|\s*[\d,]+\s*\|\s*)`[0-9A-Fa-f]{64}`'
+                    $replacement = '${1}`' + $hash + '`'
+                    $content = [regex]::Replace($content, $pattern, $replacement)
+                }
+            }
+            Set-Content -Path $docFile -Value $content -Encoding UTF8
+            Write-Host "  Updated live hashes in $(Split-Path $docFile -Leaf)" -ForegroundColor Green
+        }
+    }
+    Write-Host ""
+}
+
+# Optional: Sync documentation to Desktop Staging & Game Directory if not already deployed
+if ($SyncDesktopDocs -and -not $Deploy) {
     if (Test-Path $desktopStaging) {
         Write-Host "Syncing documentation to Desktop Staging ($desktopStaging)..." -ForegroundColor Cyan
         foreach ($doc in $docs) {
@@ -148,6 +230,11 @@ if ($SyncDesktopDocs) {
                 Copy-Item -Path $src -Destination $desktopStaging -Force
                 Write-Host "  Copied $doc -> Desktop Staging" -ForegroundColor DarkGray
             }
+        }
+        $globalKnowledge = Join-Path $globalRoot "GLOBAL_KNOWLEDGE_INDEX.md"
+        if (Test-Path $globalKnowledge) {
+            Copy-Item -Path $globalKnowledge -Destination $desktopStaging -Force
+            Write-Host "  Copied GLOBAL_KNOWLEDGE_INDEX.md -> Desktop Staging" -ForegroundColor DarkGray
         }
         Write-Host ""
     }
@@ -159,6 +246,11 @@ if ($SyncDesktopDocs) {
                 Copy-Item -Path $src -Destination $gameDir -Force
                 Write-Host "  Copied $doc -> Game Directory" -ForegroundColor DarkGray
             }
+        }
+        $globalKnowledge = Join-Path $globalRoot "GLOBAL_KNOWLEDGE_INDEX.md"
+        if (Test-Path $globalKnowledge) {
+            Copy-Item -Path $globalKnowledge -Destination $gameDir -Force
+            Write-Host "  Copied GLOBAL_KNOWLEDGE_INDEX.md -> Game Directory" -ForegroundColor DarkGray
         }
         Write-Host ""
     }

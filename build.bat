@@ -35,6 +35,10 @@ if exist gyro_workshop.cpp (
 )
 
 set "DEST=%~1"
+if /i "%DEST%"=="--deploy" goto deploy_all
+if /i "%DEST%"=="--all" goto deploy_all
+if /i "%DEST%"=="-a" goto deploy_all
+if /i "%DEST%"=="/all" goto deploy_all
 if not defined DEST goto manual
 if exist "%DEST%\" (set "DEST=%DEST%\") else for %%f in ("%DEST%") do set "DEST=%%~dpf"
 dir /b "%DEST%*.exe" >nul 2>nul
@@ -50,6 +54,7 @@ if exist PROJECT_HANDOFF.md copy /y PROJECT_HANDOFF.md "%DEST%" >nul
 if exist BOUNTY_BOARD.md copy /y BOUNTY_BOARD.md "%DEST%" >nul
 if exist MULTIAGENT_PROTOCOLS.md copy /y MULTIAGENT_PROTOCOLS.md "%DEST%" >nul
 if exist verify_repo.ps1 copy /y verify_repo.ps1 "%DEST%" >nul
+if exist ..\GLOBAL_KNOWLEDGE_INDEX.md copy /y ..\GLOBAL_KNOWLEDGE_INDEX.md "%DEST%" >nul
 if exist "%DEST%shift2_dualsense.ini" goto keepini
 copy shift2_dualsense.ini "%DEST%" >nul
 goto inidone
@@ -60,6 +65,30 @@ echo Kept your existing shift2_dualsense.ini. New settings and notes are in shif
 echo Installed %NAME%.dll into %DEST%
 echo Log file after a run: shift2_dualsense.log in that folder (or in %%TEMP%%)
 goto end
+
+:deploy_all
+echo Deploying atomically to Desktop Staging and Game Directory...
+set "TARGET1=C:\Users\Zachariah\Desktop\Shift2\"
+set "TARGET2=C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\"
+for %%D in ("%TARGET1%" "%TARGET2%") do (
+    if exist "%%~D" (
+        echo   Deploying to %%~D...
+        copy /y xinput1_3.dll "%%~Dxinput1_3.dll" >nul
+        if exist xinput_proxy_pressure_test.exe copy /y xinput_proxy_pressure_test.exe "%%~D" >nul
+        if exist gyro_workshop.exe copy /y gyro_workshop.exe "%%~D" >nul
+        if exist shift2_dualsense.ini copy /y shift2_dualsense.ini "%%~D" >nul
+        if exist SHARED_REPOSITORY.md copy /y SHARED_REPOSITORY.md "%%~D" >nul
+        if exist PROJECT_HANDOFF.md copy /y PROJECT_HANDOFF.md "%%~D" >nul
+        if exist BOUNTY_BOARD.md copy /y BOUNTY_BOARD.md "%%~D" >nul
+        if exist MULTIAGENT_PROTOCOLS.md copy /y MULTIAGENT_PROTOCOLS.md "%%~D" >nul
+        if exist verify_repo.ps1 copy /y verify_repo.ps1 "%%~D" >nul
+        if exist ..\GLOBAL_KNOWLEDGE_INDEX.md copy /y ..\GLOBAL_KNOWLEDGE_INDEX.md "%%~D" >nul
+    )
+)
+echo Parity deployment complete.
+powershell -ExecutionPolicy Bypass -File .\verify_repo.ps1 -SkipTests
+goto end
+
 
 :manual
 echo Copy xinput1_3.dll and shift2_dualsense.ini next to the game's .exe.

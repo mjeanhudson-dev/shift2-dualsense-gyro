@@ -1,4 +1,4 @@
-# Project Handoff & Milestone Decision Ledger: `vibrant-darwin`
+﻿# Project Handoff & Milestone Decision Ledger: `vibrant-darwin`
 **Authoritative Multi-Agent Handoff Log, Architectural Decisions & Retroactive Milestone Index**
 
 > [!IMPORTANT]
@@ -14,7 +14,7 @@
 | Invariant ID | Subsystem | Rule / Constraint | Rationale / Failure Mode Prevented |
 | :--- | :--- | :--- | :--- |
 | **INV-01** | **Gyro Fusion** | Ken Perlin $C^2$ Smootherstep Blend between $\omega_{\text{roll}}$ and $\omega_{\text{turn}}$ ($s(u) = u^3(10 - 15u + 6u^2)$) | Eliminates abrupt cutoff cliffs, dead spots, and flat-orientation axis cancellation. Proven zero conflict upright. |
-| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1€ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
+| **INV-02** | **Noise Filtering** | Rate-Driven Casiez 1â‚¬ Filter operating on physical $\omega_{\text{roll}}$ directly with shortest branch-cut delta | Clamps resting straightaway tremor to $\sigma < 0.03^\circ$ while dropping filter lag to $<2.5\text{ ms}$ on slide catching. Zero position differentiation noise. |
 | **INV-03** | **Boot Centering** | Boot Horizon Zero ($M.center = 0.0^\circ$) unconditionally on startup | Anchors steering center strictly to true gravity horizon instead of desk tilt. Completely eliminates the "1mm cut-out / fling" artifact (+18,810 bias). |
 | **INV-04** | **Recline / Lap Anchor** | Gravity anchor bypassed when controller pitch $|\text{pitch}| > 30^\circ$ | Holding controller reclined on the lap does not violently collapse integrated gyro steering to $0^\circ$. |
 | **INV-05** | **Corner Hold Stability** | Time constant $\tau = 25.0\text{ s}$ when $|\theta_{\text{pred}} - \theta_{\text{center}}| > 5.0^\circ$ | Sustained high-speed cornering holds never collapse back to center during long sweeper turns. |
@@ -39,10 +39,10 @@ All deployment artifacts MUST remain byte-identical across the three operational
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `3934C7EEC9B01091E2536025CB1EB9403C98F0A31DF03764DB4AFEB345EC5002` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `CA3DB5AD8F28E388F0BDE5B8969ED11A49C0D39E788EC3412AC525F266A12E25` | Verified | Verified | Verified |
 | `shift2_dualsense.ini` | 15,198 | `AA702F7962C5C56198A45FFAE0582991B48B3B68E57EAF1862E3690E5A9AF705` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `7EBBBDA0D311EFFB298542606F151CB5C9B15AB6EB111CD3B70DCA2E0FF573C5` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `1602264DF1DDC7CF8372D166BD31B119535CE10390CEACFD1A5812B8757C8EF7` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `2CDF94DD78807334EB766F82E710291C589ACF5A20FD1DAA963C9867AD351058` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `5F42DC1119E4A5AB23D9883913CD9E7B67E1912225795D3BD950A2E05C798894` | Verified | Verified | Verified |
 
 ---
 
@@ -106,17 +106,17 @@ Earlier gyro steering prototypes suffered from two major flaws:
 
 ---
 
-### [HANDOFF-004] Rate-Driven Casiez 1€ Filter & Shortest Delta Angle Wrapping
+### [HANDOFF-004] Rate-Driven Casiez 1â‚¬ Filter & Shortest Delta Angle Wrapping
 - **Timestamp:** 2026-10-16T05:30:00Z
 - **Agent Identity:** DeepCoder
 - **Bounty ID:** `BOUNTY-VD-004`
 - **Status:** COMPLETED
 
 #### Scope & Problem Addressed:
-Traditional 1€ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
+Traditional 1â‚¬ filters differentiate noisy position signals to estimate angular speed. This amplifies sensor noise on straightaways.
 
 #### Solution & Implementation:
-- Implemented rate-driven Casiez 1€ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
+- Implemented rate-driven Casiez 1â‚¬ filter operating directly on physical rate gyro velocity $\omega_{\text{roll}}$ measured at 250 Hz:
   $$f_c = f_{c,\min} + \beta |\omega_{\text{roll}}|$$
 - Implemented shortest branch-cut delta angle wrapping:
   $$\hat{\theta}_k = \text{Wrap}\left(\hat{\theta}_{k-1} + \alpha \text{Wrap}(\theta_k - \hat{\theta}_{k-1})\right)$$
@@ -300,7 +300,29 @@ Synthetic mock test bloat was causing subagents to fight each other and break wo
 
 ---
 
-### [HANDOFF-014] Multi-Agent Knowledge Repository & Universal Handoff Architecture
+### [HANDOFF-014] Interactive DualSense Workshop Suite & Live Calibration HUD
+- **Timestamp:** 2026-10-16T11:45:00Z
+- **Agent Identity:** DeepCoder
+- **Bounty ID:** `BOUNTY-VD-014`
+- **Status:** COMPLETED
+
+#### Scope & Problem Addressed:
+Instead of fragile synthetic mocks, subagents and users needed a live, interactive 250 Hz DualSense telemetry visualization tool to calibrate zero-rate gyro bias, test deadzones, benchmark jitter noise floor, and verify real controller hardware response in real-time.
+
+#### Solution & Implementation:
+- Implemented [`gyro_workshop.cpp`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.cpp) compiling to standalone 32-bit binary [`gyro_workshop.exe`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/gyro_workshop.exe).
+- 5 comprehensive interactive operating modes:
+  1. `--stream`: Real-time interactive ASCII steering wheel (`[====|====]`), Left Stick `lx` percentage gauge, 1â‚¬ filter cutoff frequency $f_c$, gravity vector magnitude, pedal positions, and multi-touchpad coordinates.
+  2. `--calibrate [seconds]`: Stationary IMU calibration wizard sampling 250 reports/sec, calculating zero-rate gyro bias offsets $(\bar{\omega}_x, \bar{\omega}_y, \bar{\omega}_z)$ and gravity magnitude $\|g\|$, and prompting `[Y/N]` to save directly into `shift2_dualsense.ini`.
+  3. `--test-deadzone`: Step-by-step breakout angle and lock measurement wizard with ASCII transfer curve.
+  4. `--test-jitter`: Noise floor standard deviation ($\sigma$) measurement across raw accelerometer, complementary fusion, and 1â‚¬ filter signals.
+  5. `--sample [N]`: Headless N-sample telemetry snapshot for automated script verification.
+- Interactive hotkey controls (`[1]`-`[5]`, `[C]`, `[S]`, `[F]`, `[T]`, `[Q]`) for real-time parameter tuning (`MaxAngle`, `Deadzone`, `Curve`, `OneEuroMinCutoff`, `OneEuroBeta`, haptic pulses, and throttle vibration).
+- Verified and synchronized across Workspace, Desktop Staging, and Game Directory.
+
+---
+
+### [HANDOFF-015] Multi-Agent Knowledge Repository & Universal Handoff Architecture
 - **Timestamp:** 2026-10-16T15:35:00Z
 - **Agent Identity:** Coding Worker (Conversation: `7279ff73-4139-462c-8f64-91877ef79239`)
 - **Bounty ID:** `BOUNTY-GL-015`
@@ -315,10 +337,13 @@ Subagents were conflicting, duplicating analysis, and inflating synthetic tests.
   - `MULTIAGENT_PROTOCOLS.md`: Standard collaboration handbook, invariant rules, claim lifecycle, and handoff template.
   - `GLOBAL_KNOWLEDGE_INDEX.md`: Cross-project catalog of reusable algorithms, protocols, and math formulations.
 - Standardized project-level files in `c:\Users\Zachariah\Documents\antigravity\vibrant-darwin\`:
-  - `PROJECT_HANDOFF.md`: Full retroactive history of all 14 milestones, locked invariants, and SHA256 parity table.
+  - `PROJECT_HANDOFF.md`: Full retroactive history of all 15 milestones, locked invariants, and SHA256 parity table.
   - `BOUNTY_BOARD.md`: Project-slice view of active and completed bounties.
   - `MULTIAGENT_PROTOCOLS.md`: Project-local collaboration handbook.
   - `SHARED_REPOSITORY.md`: Updated locked architecture and math specifications.
   - `verify_repo.ps1`: Automated PowerShell script verifying 114 PINPOINT checks, SHA256 binary parity across Workspace, Desktop Staging, and Game Directory, and repo file integrity.
 - Verified 100% SHA256 binary parity across Workspace, Desktop Staging, and Game Directory.
 - Verified 114/114 PINPOINT test pass.
+
+
+
