@@ -67,31 +67,38 @@ Standard 1€ filters differentiate noisy position signals to estimate velocity.
 ### Sensor Fusion & Gravity Anchor
 - **Gravity Roll Calculation:**
   $$\theta_{\text{accel}} = \text{atan2}(-a_x, \sqrt{a_y^2 + a_z^2}) \times 57.29578^\circ$$
-- **Complementary Filter Fusion:**
+- **Complementary Filter Fusion & Recline / Lap Immunity:**
   $$\theta_{\text{gyro}} \leftarrow \text{Wrap}(\theta_{\text{gyro}} + \omega_{\text{roll}} \Delta t)$$
-  $$\theta_{\text{gyro}} \leftarrow \text{Wrap}\left(\theta_{\text{gyro}} + \text{Wrap}(\theta_{\text{accel}} - \theta_{\text{gyro}}) \times \frac{\Delta t}{\tau + \Delta t}\right)$$
-- **Acoustic Decoupling & $\tau$ Scaling:**
-  To prevent motor rumble from corrupting gravity orientation while keeping drift correction active:
+  When holding the controller reclined on the lap ($|\text{pitch}| > 30^\circ$), lateral $a_x$ does not track wheel rotation. The gravity anchor is bypassed to prevent violently collapsing integrated steering angle to $0^\circ$.
+  $$\theta_{\text{gyro}} \leftarrow \text{Wrap}\left(\theta_{\text{gyro}} + \text{Wrap}(\theta_{\text{accel}} - \theta_{\text{gyro}}) \times \frac{\Delta t}{\tau + \Delta t}\right) \quad (\text{if } |\text{pitch}| \le 30^\circ)$$
+- **Acoustic Decoupling, Boot Horizon Zero & $\tau$ Scaling:**
+  - **Boot Horizon Alignment ($M.center = 0.0^\circ$):** On boot, the proxy anchors steering center strictly to true gravity horizon ($0.0^\circ$) rather than latching desk tilt ($M.center = M.angle$), completely eliminating the "1mm cut-out / fling" artifact where resting tilt applied massive steering bias (+18,810).
   - Trust window: $\|a\| \in [0.70g, 1.35g]$ and $|\omega_{\text{roll}}| < 180^\circ/\text{s}$.
-  - Under rumble activity: $\tau$ expands smoothly to $0.85\text{ s}$ (suppressing vibration noise); when quiet, $\tau = 0.22\text{ s}$.
+  - **Sustained Corner Hold Stability:** During in-race cornering holds ($|\theta_{\text{pred}} - \theta_{\text{center}}| > 5.0^\circ$), $\tau = 25.0\text{ s}$. This prevents steady-state cornering holds from collapsing back to center.
+  - **Active Steering Motion:** When actively turning ($|\omega_{\text{roll}}| > 2.0^\circ/\text{s}$), $\tau = 8.0\text{ s}$ (relaxed gravity anchor preserving steering wheel turns).
+  - **Stationary Horizon Alignment:** In menus or when centered at rest ($|\omega_{\text{roll}}| \le 2.0^\circ/\text{s}$), $\tau = 0.22\text{ s}$ (or $0.85\text{ s}$ under rumble), continuously aligning to true gravity without artificial latching.
 
 ---
 
-## 3. 3-2-1 Race Start & Starting Grid Initialization
+## 3. Starting Grid & Centering Architecture (Removal of Fragile 3-2-1 Auto-Zero)
 
-### The Loading Screen Problem
-During Shift 2's 56-second track loading screen, `shift2u.exe` pauses calls to `XInputGetState`. If the player rests the controller on their lap at an angle, older code would lock that angle as "center", causing the car to steer violently into the barrier upon the "3-2-1 GO" countdown.
+### The Fragile Countdown Problem
+The previous attempt at automatic 3-2-1 starting grid detection used a timer gap threshold ($\Delta t_{\text{gap}} > 2500\text{ ms}$) and locked onto steady frames during race countdown. In practice, this created false triggers, locked out pre-steering on the starting grid, and caused race conditions where the wheel would suddenly lock or jump off-center if the player moved their hands during the 3-2-1 countdown.
 
-### Solution
-- The proxy tracks elapsed time between `XInputGetState` calls.
-- If $\Delta t_{\text{gap}} > 2500\text{ ms}$, the proxy marks grid entry: `M.gridEntryTime = now;`.
-- During the first 1500 ms on the starting grid, if the controller is held steady ($|\omega_{\text{roll}}| < 15^\circ/\text{s}$), the proxy auto-zeros steering center:
-  `M.center = M.angle; M.steerOutput = 0.0f;`
-- PS button resets car in Shift 2 (`XB_BACK`) and re-centers motion steering reliably.
+### The Clean Solution
+- The brittle 3-2-1 automatic gap detection and grid auto-zeroing heuristic has been completely removed.
+- **Continuous Gravity Alignment:** When resting upright or held steady, the gravity anchor ($\tau = 0.22\text{ s}$) continuously and seamlessly aligns gyro center with true physical gravity without artificial latching.
+- **Deterministic Manual Centering:**
+  - **PS Button (`XB_BACK`):** Shift 2's native "Reset Car" button instantly re-centers motion steering and clears rack state (`M.center = M.angle; M.steerOutput = 0.0f;`).
+  - **Mute / Mic Button:** Instantly toggles motion steering and re-centers.
 
 ---
 
 ## 4. Steering Dampening & Game Defaults
+
+### Realistic Steering Lock & Granular Subtlety
+- `[Motion] MaxAngle=75` (default) provides a realistic 75° steering wheel lock range (equivalent to 150° lock-to-lock).
+- Combined with `Deadzone=1.0` and `Curve=100`, this delivers silky smooth granular steering subtlety across the entire range without needing to fling the controller.
 
 ### Progressive Smooth Deadzone
 Old code had a discontinuous 1310-unit jump at $1.0^\circ$ tilt.
@@ -101,42 +108,61 @@ float blend = (n < 0.25f) ? (n / 0.25f) : 1.0f;
 n = (g * blend) + (1.0f - g * blend) * n;
 ```
 
-### Game Native Steering Dampening (`DampeningEnabled="1"`)
-- `[Motion] Smoothing=100` (default) provides direct 1:1 passthrough from gyro to the game's XInput stick, so **Shift 2's original built-in steering dampening** operates natively without artificial proxy double-filtering:
-  - **In-Game XML Defaults:** `DampeningEnabled="1"` enabled in `vehicleset_pc_xinput_*.xml`, `vehicleset_pc_custom_pad.xml`, and `vehicleset_pc_custom_wheel.xml`.
-  - **Game Timing Parameters:** `DampeningTimeCentreToLock="0.500000"`, `DampeningTimeLockToCentre="0.300000"`, `DampeningTimeOppositeLockToCentre="0.300000"`, `NominalRiseDamping="0.950000"`, `NominalFallDamping="0.750000"`, `TurnDeadzone="0.037500"`, `TurnSensitivity="0.250000"`, `SpeedSensitiveSteering="1.000000"`.
-  - Setting `Smoothing=50` is available if a user explicitly prefers proxy-side weighted rack filtering instead of game-side dampening.
-  - In Shift 2 Controller Options: Pressing `Triangle` / `Y` ("Reset to Default") immediately reloads these clean XML defaults into the user profile.
+### Reintegrated Proxy-Side Input Lag & Progressive Steering Wheel Dampening (`Smoothing=50`)
+- While Shift 2 has native in-game XML dampening (`DampeningEnabled="1"`), relying solely on game settings leaves gyro steering overly snappy and twitchy.
+- Proxy-side input lag and progressive steering wheel dampening is reintegrated on our end via `[Motion] Smoothing=50` (default) operating alongside game settings:
+  - **Asymmetric Weighted Rack Physics (`SmoothSteer()`):**
+    - `CentreToLock`: $1.20 \times \tau_{\text{base}}$ ($108\text{ ms}$ rise dampening into corners, modeling tire slip angle resistance).
+    - `LockToCentre`: $0.70 \times \tau_{\text{base}}$ ($63\text{ ms}$ unwinding back to center, modeling caster self-aligning torque).
+    - `OppositeLockToCentre`: $0.45 \times \tau_{\text{base}}$ ($40.5\text{ ms}$ responsive counter-steering across center for slide catching).
+    - **Slew Velocity Compression:** Engages on extreme slides ($|\Delta| > 16000$ units, scaling $\tau$ down with a firm $0.65$ floor) to catch violent snaps without twitching.
+  - **Direct Passthrough:** Setting `Smoothing=0` or `100` provides direct 1:1 passthrough if a user explicitly wants to bypass proxy-side dampening.
+  - **In-Game XML Defaults:** `DampeningEnabled="1"` remains active in `vehicleset_pc_*.xml` (`DampeningTimeCentreToLock="0.500000"`, `DampeningTimeLockToCentre="0.300000"`).
+  - In Shift 2 Controller Options: Pressing `Triangle` / `Y` ("Reset to Default") immediately reloads clean XML defaults into the user profile.
 
 ---
 
-## 5. Haptic Feedback & Triggers
+## 5. Controls, Haptic Feedback & Triggers
+
+### Handbrake Controls
+- **Physical PlayStation Cross button ('X' / Xbox A):** Mapped directly to Xbox A (Shift 2's native Handbrake button).
+- **Alternate L3 Handbrake (`L3Handbrake=1`):** Clicking Left Stick (L3) also injects Xbox A during race driving.
+
+### Trigger (L2 / R2) Menu Isolation & 15-Count Deadzone
+- **Unified Race State Machine:** Driving state is governed by an authoritative unified state machine (`g_raceActive`, `M.inRaceState`, `g_lastRaceActivityMs`). Driving is flagged exclusively by throttle engagement ($R_2 > 35$) or active game rumble ($>0$).
+- **Menu Haptics Isolation:** Pulling L2 in menus never latches race active mode, completely preventing heavy race brake resistance (`BrakeStrength=3, BrakeEndStrength=7`) or ABS judder in menu screens.
+- **Menu Deadzone for L2 and R2:** When in menus, an unconditional 15-count deadzone is applied to both L2 and R2 (`d[4] < 15 -> 0`, `d[5] < 15 -> 0`), eliminating resting finger bleed (7-12 counts) from triggering unwanted menu navigation or tab scrolling.
+- **`[MenuHaptics] TriggerMode=0` (Default):** Resets triggers to soft stock profile (`0x05`) upon 4.0s idle timeout.
 
 ### R2 Throttle Vibration
 - Configured in `[Triggers] ThrottleVibeMax=5`, `ThrottleFrequency=40`, and `[Limiter] Enabled=1`.
-- When $R_2 > 25$, the proxy routes Shift 2's curb/engine rumble from `g_rumbleL` into R2 trigger vibration (DualSense trigger mode `0x26`).
+- When $R_2 > 25$, the proxy routes Shift 2's curb/engine rumble from `g_rumbleL` or `g_rumbleR` into R2 trigger vibration (DualSense trigger mode `0x26` at 40 Hz).
 
 ### Controller Fast Motion Flick Vibration
 - Configured in `[Flick] Enabled=1`, `Threshold=340 deg/s`, `Ms=90 ms`, `Lockout=400 ms`.
 - Evaluates 3-axis angular velocity magnitude to detect sharp intentional controller movements.
 - Fires a 90 ms tactile vibration pulse (power 150) in both motors with magenta lightbar confirmation.
 
-### DualSense Touchpad / Trackpad Flick Right Stick Corner Look
+### DualSense Touchpad / Trackpad Flick Camera Glance Decoupling
 - Configured in `[Touch] Glance=1`, `Strength=100`, `Deadzone=12`.
 - Reads capacitive multi-touch coordinates $(tx, ty) \in [0, 1920] \times [0, 1080]$ from USB report bytes `d[32..35]`.
-- **Right Stick Look Mapping (`rx`, `ry`):**
-  - **Horizontal Flick (Left / Right):** Snaps Right Stick $rx = \pm 32767$ to look into the left/right mirror and corner apex.
-  - **Diagonal Apex Flick (Up-Left / Up-Right):** Angles camera look directly into the corner apex ($rx = \pm 32767, ry = +32767$).
-  - **Downward Flick:** Deflects Right Stick down ($rx = 0, ry = -32768$) for instant look back / rearview camera.
+- **Decoupled Analog Look Mapping (`XB_R3` Lockout Removed):**
+  - In Shift 2, pressing `XB_R3` (`Chase Look`) locks out and suppresses analog stick deflection (`rx`), freezing the camera while vibrating.
+  - **Horizontal Flick (Left / Right):** Purely deflects Right Stick $rx = \pm 32767$ without `XB_R3`, allowing Shift 2's camera to glance smoothly into the corner.
+  - **Diagonal Apex Flick (Up-Left / Up-Right):** Angles camera look into corner apex ($rx = \pm 32767, ry = +32767$) purely on analog axes.
+  - **Downward Flick:** Injects Shift 2's native Look Behind button (`XB_Y`) with $rx = 0, ry = 0$.
   - **Upward Flick:** Deflects Right Stick up ($rx = 0, ry = +32767$) for high cockpit view.
 - **Hold, Smooth Recenter & Resting Finger Behavior:**
-  - Glances hold for 450 ms or as long as the finger remains actively swiped beyond the hold threshold.
-  - Returns smoothly to center over the final 120 ms of hold via linear decay scaling (both when lifting finger and when resting finger remains in place).
+  - Glances hold for 750 ms so Shift 2's 500 ms camera rise damping can fully animate and hold.
+  - Returns smoothly to center over the final 120 ms of hold via linear decay scaling.
   - Automatically re-anchors resting finger position upon expiry so subsequent flicks trigger immediately without requiring the finger to lift.
-- **Multi-Directional Transitions & Reversals:**
-  - Fluidly transitions between any glance directions (Left $\leftrightarrow$ Right, Side Glance $\leftrightarrow$ Rearview / High Cockpit) on reverse/opposing flicks without lifting finger.
+- **Unified Gesture Engine, Transitions & Repeat Swipes:**
+  - Evaluates gestures via strict aspect ratio checks: horizontal flicks require $|\Delta x| > 0.7 |\Delta y|$ and vertical flicks require $|\Delta y| > 1.2 |\Delta x|$.
+  - Steep downward swipes for Look Behind (`XB_Y`) with minor lateral hand drift are protected from being hijacked into horizontal glances.
+  - Allows repeated swipes in the same direction to refresh the 750 ms hold timer without arbitrary direction lockout gates.
+  - Fluidly transitions between any glance directions (left, right, apex up-right/up-left, look behind, high cockpit) without requiring finger lift.
 - **Physical Click Separation:**
-  - Pressing the mechanical touchpad click (`tp` / bit 1 of byte `d[9]`) immediately cancels any active glance and latches until finger lift, ensuring physical clicks and swipe gestures never conflict.
+  - Pressing the mechanical touchpad click cancels active glances, keeping gestures and button clicks completely separated.
 
 ---
 
@@ -156,7 +182,7 @@ Rather than running synthetic mock unit tests, `gyro_workshop.exe` provides a co
   - Trackpad: Multi-touch position $(tx, ty)$, displacement $(dx, dy)$, detected glance gesture, and Right Stick deflection $(rx, ry)$.
 - **Interactive Keyboard Controls:**
   - `[C]` or PS / Mute: Re-center steering
-  - `[1]` / `[!]`: Dec / Inc `MaxAngle` (28°)
+  - `[1]` / `[!]`: Dec / Inc `MaxAngle` (75°)
   - `[2]` / `[@]`: Dec / Inc `Deadzone` (1.0°)
   - `[3]` / `[#]`: Dec / Inc `Curve` (100)
   - `[4]` / `[$]`: Dec / Inc 1€ `MinCutoff` (1.20 Hz)
@@ -187,4 +213,27 @@ Core files:
 - `xinput1_3.dll` (32-bit proxy DLL)
 - `shift2_dualsense.ini` (configuration)
 - `gyro_workshop.exe` (live hardware test & troubleshooting tool)
+- `xinput_proxy_pressure_test.exe` (PINPOINT verification test runner)
+- `xinput_proxy.cpp` / `xinput_proxy_pressure_test.cpp` / `gyro_workshop.cpp`
 - `build.bat` (unified builder)
+
+---
+
+## 8. Intro Cinematic Removal (Instant Game Startup)
+
+Shift 2 Unleashed's boot videos (`BootFlow_in.bik` and `BootFlow_out.bik`) add ~35 seconds of unskippable loading overhead on every launch.
+- **Location:** `Need for Speed Shift 2 Unleashed\Movies\`
+- **Fix:** Renamed to `BootFlow_in.bik.bak` and `BootFlow_out.bik.bak`.
+- **Behavior:** Shift 2's native Bink video loader handles missing startup videos gracefully, directly displaying the title screen in under 2 seconds.
+
+---
+
+## 9. PINPOINT Verification Test Suite (`xinput_proxy_pressure_test.exe`)
+
+The generic test suite has been completely replaced with 6 targeted PINPOINT verification suites (56 exhaustive checks) targeting every critical failure mode:
+1. **`PINPOINT_BOOT_HORIZON_ZERO`:** Controller boots at -16.5° tilt; levels to 0°; verifies $M.center = 0.0^\circ$ and steering output is exactly 0. Verifies tilting 1mm left (-2.0°) immediately produces left steering (`lx < 0`), eliminating fling thresholds.
+2. **`PINPOINT_CORNER_HOLD_STABILITY`:** Sustained 25.0° roll hold for 3.0s at 250 Hz under rumble; verifies $\tau \ge 25.0\text{ s}$ prevents steering collapse.
+3. **`PINPOINT_TOUCHPAD_GLANCE_DECOUPLING`:** Left, right, diagonal, repeat, and steep downward swipes; verifies pure $rx / ry = \pm 32767$ without `XB_R3` camera freeze, repeat hold refresh, and aspect ratio protection for Look Behind (`XB_Y`).
+4. **`PINPOINT_MENU_TRIGGER_RECOVERY`:** Engages race rumble/throttle, idles 4.1s; verifies timeout resets trigger mode to `0x05` (soft) and deadzones resting finger float (10 counts -> 0). Pulls L2 hard (200 counts) in menus; verifies race active mode is never engaged and triggers remain soft.
+5. **`PINPOINT_THROTTLE_VIBRATION_ROUTING`:** Pulls throttle under race rumble; captures output report; verifies R2 vibration mode `0x26` at 40 Hz. Verifies `ThrottleVibeMax=0` keeps R2 in pure constant resistance mode `0x21`.
+6. **`PINPOINT_ASYMMETRIC_RACK_DAMPENING`:** Verifies turn-in, unwinding, and counter-steer crossover response times with exact zero deadband settling, and direct 1:1 passthrough when `Smoothing=100`.

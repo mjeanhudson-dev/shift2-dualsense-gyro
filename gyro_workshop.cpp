@@ -18,7 +18,7 @@ static float Wrap(float a)
     return a;
 }
 
-// Casiez et al. 1€ Filter (One Euro Filter) with direct rate-gyro support
+// Casiez et al. 1-Euro Filter (One Euro Filter) with direct rate-gyro support
 struct OneEuroFilter {
     float minCutoff; // Minimum cutoff frequency in Hz (clamps resting tremor on straights)
     float beta;      // Speed coefficient (eliminates phase lag on fast turns)
@@ -183,7 +183,44 @@ static void GetIniPath(char* buf, size_t bufSize)
     snprintf(buf, bufSize, "%sshift2_dualsense.ini", exeDir);
 }
 
-static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, float* minCutoff, float* beta,
+static int SmoothSteerWorkshop(int target, float dt, int smoothing, float* steerOutput)
+{
+    if (smoothing >= 100 || smoothing <= 0) {
+        *steerOutput = (float)target;
+        return target;
+    }
+    if (dt <= 0.0f) return (int)lroundf(*steerOutput);
+    if (dt > 0.05f) dt = 0.05f;
+    float cur = *steerOutput;
+    float tgt = (float)target;
+
+    float baseTau = 0.015f + (float)smoothing * 0.0015f;
+    if (baseTau < 0.006f) baseTau = 0.006f;
+
+    float tau = baseTau;
+    if (cur * tgt < 0.0f) {
+        tau = baseTau * 0.45f;  // OppositeLockToCentre: counter-steering across center is fast and responsive
+    } else if (fabsf(tgt) < fabsf(cur)) {
+        tau = baseTau * 0.70f;  // LockToCentre: unwinding back toward center is crisp
+    } else {
+        tau = baseTau * 1.20f;  // CentreToLock: natural progressive rise dampening into corners
+    }
+
+    float diff = fabsf(tgt - cur);
+    if (diff > 16000.0f) {
+        float comp = 16000.0f / diff;
+        if (comp < 0.65f) comp = 0.65f;
+        tau *= comp;
+    }
+
+    float alpha = dt / (tau + dt);
+    if (alpha > 1.0f) alpha = 1.0f;
+    *steerOutput += (tgt - cur) * alpha;
+    if (fabsf(*steerOutput) < 1.0f && target == 0) *steerOutput = 0.0f;
+    return (int)lroundf(*steerOutput);
+}
+
+static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smoothing, float* minCutoff, float* beta,
                           int* flickEnabled, float* flickThresh, int* flickMs, int* flickLock,
                           int* glanceEnabled, int* glanceStrength, int* glanceDead,
                           float* biasX, float* biasY, float* biasZ)
@@ -191,9 +228,10 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, float* m
     char iniPath[MAX_PATH];
     GetIniPath(iniPath, sizeof(iniPath));
 
-    *maxAngle = 28.0f;
+    *maxAngle = 75.0f;
     *deadzone = 1.0f;
     *curve = 100;
+    *smoothing = 50;
     *minCutoff = 1.20f;
     *beta = 0.040f;
     *flickEnabled = 1;
@@ -208,9 +246,14 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, float* m
     *biasZ = 0.0f;
 
     if (GetFileAttributesA(iniPath) != INVALID_FILE_ATTRIBUTES) {
-        *maxAngle = (float)GetPrivateProfileIntA("Motion", "MaxAngle", 28, iniPath);
-        *deadzone = (float)GetPrivateProfileIntA("Motion", "Deadzone", 1, iniPath);
+        *maxAngle = (float)GetPrivateProfileIntA("Motion", "MaxAngle", 75, iniPath);
+        char dzBuf[64];
+        if (GetPrivateProfileStringA("Motion", "Deadzone", "", dzBuf, sizeof(dzBuf), iniPath) > 0)
+            *deadzone = (float)atof(dzBuf);
+        else
+            *deadzone = 1.0f;
         *curve = GetPrivateProfileIntA("Motion", "Curve", 100, iniPath);
+        *smoothing = GetPrivateProfileIntA("Motion", "Smoothing", 50, iniPath);
         int mcInt = GetPrivateProfileIntA("Motion", "OneEuroMinCutoff", 120, iniPath);
         int bInt = GetPrivateProfileIntA("Motion", "OneEuroBeta", 40, iniPath);
         *minCutoff = (float)mcInt / 100.0f;
@@ -232,8 +275,8 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, float* m
         *flickLock = (*flickLock < 50) ? 50 : ((*flickLock > 3000) ? 3000 : *flickLock);
         *flickThresh = (*flickThresh < 100.0f) ? 100.0f : ((*flickThresh > 3000.0f) ? 3000.0f : *flickThresh);
         printf("[i] Loaded configuration from shift2_dualsense.ini:\n");
-        printf("    Motion:   MaxAngle=%.0f deg, Deadzone=%.1f deg, Curve=%d\n", *maxAngle, *deadzone, *curve);
-        printf("    1€ Filter:MinCutoff=%.2f Hz, Beta=%.3f\n", *minCutoff, *beta);
+        printf("    Motion:   MaxAngle=%.0f deg, Deadzone=%.1f deg, Curve=%d, Smoothing=%d\n", *maxAngle, *deadzone, *curve, *smoothing);
+        printf("    1-Euro:   MinCutoff=%.2f Hz, Beta=%.3f\n", *minCutoff, *beta);
         printf("    Bias:     X=%.2f, Y=%.2f, Z=%.2f deg/s\n", *biasX, *biasY, *biasZ);
         printf("    Flick:    %s (Threshold=%.0f deg/s, Pulse=%d ms, Lockout=%d ms)\n",
                *flickEnabled ? "ENABLED" : "DISABLED", *flickThresh, *flickMs, *flickLock);
@@ -244,7 +287,7 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, float* m
     }
 }
 
-static void SaveIniConfig(float maxAngle, float deadzone, int curve, float minCutoff, float beta,
+static void SaveIniConfig(float maxAngle, float deadzone, int curve, int smoothing, float minCutoff, float beta,
                           float biasX, float biasY, float biasZ)
 {
     char iniPath[MAX_PATH];
@@ -253,10 +296,15 @@ static void SaveIniConfig(float maxAngle, float deadzone, int curve, float minCu
 
     snprintf(val, sizeof(val), "%d", (int)roundf(maxAngle));
     WritePrivateProfileStringA("Motion", "MaxAngle", val, iniPath);
-    snprintf(val, sizeof(val), "%.1f", deadzone);
+    if (fabsf(deadzone - roundf(deadzone)) < 0.05f)
+        snprintf(val, sizeof(val), "%d", (int)roundf(deadzone));
+    else
+        snprintf(val, sizeof(val), "%.1f", deadzone);
     WritePrivateProfileStringA("Motion", "Deadzone", val, iniPath);
     snprintf(val, sizeof(val), "%d", curve);
     WritePrivateProfileStringA("Motion", "Curve", val, iniPath);
+    snprintf(val, sizeof(val), "%d", smoothing);
+    WritePrivateProfileStringA("Motion", "Smoothing", val, iniPath);
     snprintf(val, sizeof(val), "%d", (int)roundf(minCutoff * 100.0f));
     WritePrivateProfileStringA("Motion", "OneEuroMinCutoff", val, iniPath);
     snprintf(val, sizeof(val), "%d", (int)roundf(beta * 1000.0f));
@@ -395,9 +443,9 @@ static int RunCalibration(HANDLE dev, int sampleSeconds)
             int ch = _getch();
             if (ch == 'y' || ch == 'Y') {
                 float maxA, dead, mc, b, ft, bx, by, bz;
-                int c, fe, fm, fl, ge, gs, gd;
-                LoadIniConfig(&maxA, &dead, &c, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
-                SaveIniConfig(maxA, dead, c, mc, b, (float)meanGx, (float)meanGy, (float)meanGz);
+                int c, sm, fe, fm, fl, ge, gs, gd;
+                LoadIniConfig(&maxA, &dead, &c, &sm, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
+                SaveIniConfig(maxA, dead, c, sm, mc, b, (float)meanGx, (float)meanGy, (float)meanGz);
                 SendOutput(dev, 0, 0, 0, 255, 0, 0x21, 1, 0); // Green confirmation
                 Sleep(400);
                 break;
@@ -420,9 +468,9 @@ static int RunDeadzoneTest(HANDLE dev)
     printf("          DUALSENSE STEERING DEADZONE & BREAKOUT WIZARD             \n");
     printf("====================================================================\n\n");
 
-    float maxA = 28.0f, dead = 1.0f, mc = 1.20f, b = 0.040f, ft = 340.0f, bx = 0, by = 0, bz = 0;
-    int c = 100, fe = 1, fm = 90, fl = 400, ge = 1, gs = 100, gd = 12;
-    LoadIniConfig(&maxA, &dead, &c, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
+    float maxA = 75.0f, dead = 1.0f, mc = 1.20f, b = 0.040f, ft = 340.0f, bx = 0, by = 0, bz = 0;
+    int c = 100, sm = 50, fe = 1, fm = 90, fl = 400, ge = 1, gs = 100, gd = 12;
+    LoadIniConfig(&maxA, &dead, &c, &sm, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
 
     OVERLAPPED ov = {};
     ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -462,6 +510,7 @@ static int RunDeadzoneTest(HANDLE dev)
 
         float gyz = sqrtf(filtAy * filtAy + filtAz * filtAz);
         if (gyz < 100.0f) gyz = 100.0f;
+        float pitch = atan2f(filtAz, sqrtf(filtAx * filtAx + filtAy * filtAy)) * 57.29578f;
         float roll = atan2f(-filtAx, (filtAy >= -2000.0f ? gyz : -gyz)) * 57.29578f;
 
         float rateZ = ((float)gz / kGyroScale) - bz;
@@ -469,8 +518,11 @@ static int RunDeadzoneTest(HANDLE dev)
         float gyroRollDps = -(rateZ * (filtAy / gyz) + rateY * (filtAz / gyz));
 
         gyroAngle = Wrap(gyroAngle + gyroRollDps * dt);
-        float tau = 0.22f;
-        gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * (dt / (tau + dt)));
+        bool reclined = (fabsf(pitch) > 30.0f);
+        if (!reclined) {
+            float tau = (fabsf(gyroRollDps) > 2.0f) ? 8.0f : 0.22f;
+            gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * (dt / (tau + dt)));
+        }
         float cleanAngle = steerFilter.FilterWithRate(gyroAngle, gyroRollDps, dt);
 
         float aAngle = fabsf(cleanAngle);
@@ -518,6 +570,7 @@ static int RunDeadzoneTest(HANDLE dev)
         filtAz += ((float)az - filtAz) * 0.22f;
         float gyz = sqrtf(filtAy * filtAy + filtAz * filtAz);
         if (gyz < 100.0f) gyz = 100.0f;
+        float pitch = atan2f(filtAz, sqrtf(filtAx * filtAx + filtAy * filtAy)) * 57.29578f;
         float roll = atan2f(-filtAx, (filtAy >= -2000.0f ? gyz : -gyz)) * 57.29578f;
 
         float rateZ = ((float)gz / kGyroScale) - bz;
@@ -525,8 +578,11 @@ static int RunDeadzoneTest(HANDLE dev)
         float gyroRollDps = -(rateZ * (filtAy / gyz) + rateY * (filtAz / gyz));
 
         gyroAngle = Wrap(gyroAngle + gyroRollDps * dt);
-        float tau = 0.22f;
-        gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * (dt / (tau + dt)));
+        bool reclined = (fabsf(pitch) > 30.0f);
+        if (!reclined) {
+            float tau = (fabsf(gyroRollDps) > 2.0f) ? 8.0f : 0.22f;
+            gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * (dt / (tau + dt)));
+        }
         float cleanAngle = steerFilter.FilterWithRate(gyroAngle, gyroRollDps, dt);
 
         float aAngle = fabsf(cleanAngle);
@@ -568,12 +624,12 @@ static int RunDeadzoneTest(HANDLE dev)
 static int RunJitterTest(HANDLE dev)
 {
     printf("====================================================================\n");
-    printf("        DUALSENSE 1€ FILTER JITTER & NOISE BENCHMARK                \n");
+    printf("        DUALSENSE 1-EURO FILTER JITTER & NOISE BENCHMARK            \n");
     printf("====================================================================\n\n");
 
-    float maxA = 28.0f, dead = 1.0f, mc = 1.20f, b = 0.040f, ft = 340.0f, bx = 0, by = 0, bz = 0;
-    int c = 100, fe = 1, fm = 90, fl = 400, ge = 1, gs = 100, gd = 12;
-    LoadIniConfig(&maxA, &dead, &c, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
+    float maxA = 75.0f, dead = 1.0f, mc = 1.20f, b = 0.040f, ft = 340.0f, bx = 0, by = 0, bz = 0;
+    int c = 100, sm = 50, fe = 1, fm = 90, fl = 400, ge = 1, gs = 100, gd = 12;
+    LoadIniConfig(&maxA, &dead, &c, &sm, &mc, &b, &fe, &ft, &fm, &fl, &ge, &gs, &gd, &bx, &by, &bz);
 
     OVERLAPPED ov = {};
     ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -663,12 +719,12 @@ static int RunJitterTest(HANDLE dev)
     printf("  1. Raw Accelerometer Roll  |  sigma = %.4f deg\n", sRaw);
     printf("  2. Complementary Filter    |  sigma = %.4f deg (%.1f%% reduction)\n",
            sComp, (1.0 - (sComp / (sRaw > 1e-4 ? sRaw : 1.0))) * 100.0);
-    printf("  3. Rate-Driven 1€ Filter   |  sigma = %.4f deg (%.1f%% total reduction!)\n",
+    printf("  3. Rate-Driven 1-Euro Filter |  sigma = %.4f deg (%.1f%% total reduction!)\n",
            s1E, (1.0 - (s1E / (sRaw > 1e-4 ? sRaw : 1.0))) * 100.0);
     printf("====================================================================\n\n");
 
     if (s1E < 0.03) {
-        printf("[+] EXCELLENT: 1€ Filter effectively eliminated resting jitter (<0.03 deg)!\n");
+        printf("[+] EXCELLENT: 1-Euro Filter effectively eliminated resting jitter (<0.03 deg)!\n");
         printf("    Straightaways will be rock-solid with zero chassis twitch.\n\n");
     }
 
@@ -723,9 +779,10 @@ int main(int argc, char* argv[])
     printf("   DUALSENSE GYRO & HAPTICS REAL-TIME WORKSHOP / TROUBLESHOOT KIT   \n");
     printf("====================================================================\n\n");
 
-    float maxAngle = 28.0f;
+    float maxAngle = 75.0f;
     float deadzone = 1.0f;
     int curve = 100;
+    int smoothing = 50;
     float minCutoff = 1.20f;
     float beta = 0.040f;
     float biasX = 0.0f, biasY = 0.0f, biasZ = 0.0f;
@@ -737,7 +794,7 @@ int main(int argc, char* argv[])
     int glanceStrength = 100;
     int glanceDead = 12;
 
-    LoadIniConfig(&maxAngle, &deadzone, &curve, &minCutoff, &beta,
+    LoadIniConfig(&maxAngle, &deadzone, &curve, &smoothing, &minCutoff, &beta,
                   &flickEnabled, &flickThresh, &flickMs, &flickLock,
                   &glanceEnabled, &glanceStrength, &glanceDead,
                   &biasX, &biasY, &biasZ);
@@ -762,6 +819,7 @@ int main(int argc, char* argv[])
     float filtAx = 0.0f, filtAy = 8192.0f, filtAz = 0.0f;
     float gyroAngle = 0.0f, steerCenter = 0.0f;
     float cleanAngle = 0.0f;
+    float workshopSteerOutput = 0.0f;
     int biasCount = 0;
     DWORD lastMs = GetTickCount();
     DWORD flickUntil = 0;
@@ -782,8 +840,9 @@ int main(int argc, char* argv[])
     printf("  [C] or PS/Mute: Center Steering  |  [F] Test Flick Pulse (150/150)\n");
     printf("  [T] Test R2 Vibration (Mode 0x26, 40Hz)  |  [S] Save Settings to INI\n");
     printf("  [1]/[!] Dec/Inc MaxAngle (%.0f deg)   |  [2]/[@] Dec/Inc Deadzone (%.1f deg)\n", maxAngle, deadzone);
-    printf("  [3]/[#] Dec/Inc Curve (%d)          |  [4]/[$] Dec/Inc 1€ MinCutoff (%.2f Hz)\n", curve, minCutoff);
-    printf("  [5]/[%%] Dec/Inc 1€ Beta (%.3f)       |  [Q] Quit\n", beta);
+    printf("  [3]/[#] Dec/Inc Curve (%d)          |  [4]/[$] Dec/Inc 1-Euro MinCutoff (%.2f Hz)\n", curve, minCutoff);
+    printf("  [5]/[%%] Dec/Inc 1-Euro Beta (%.3f)  |  [6]/[^] Dec/Inc Smoothing (%d)\n", beta, smoothing);
+    printf("  [Q] Quit\n");
     printf("  Trackpad: Swipe Left/Right for Corner Glance, Diagonally for Apex, Down for Rearview\n");
     printf("--------------------------------------------------------------------\n\n");
 
@@ -896,13 +955,14 @@ int main(int argc, char* argv[])
 
         // Low-rate gravity tilt anchor
         bool accelTrusted = accMag > 5700.0f && accMag < 11000.0f && fabsf(gyroRollDps) < 180.0f;
-        if (accelTrusted) {
-            float tau = 0.22f;
+        bool reclined = (fabsf(pitch) > 30.0f);
+        if (accelTrusted && !reclined) {
+            float tau = (fabsf(gyroRollDps) > 2.0f) ? 8.0f : 0.22f;
             float correction = dt / (tau + dt);
             gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * correction);
         }
 
-        // Adaptive Rate-Driven 1€ Filter (zero derivative lag)
+        // Adaptive Rate-Driven 1-Euro Filter (zero derivative lag)
         steerFilter.minCutoff = minCutoff;
         steerFilter.beta = beta;
         cleanAngle = steerFilter.FilterWithRate(gyroAngle, gyroRollDps, dt);
@@ -917,7 +977,8 @@ int main(int argc, char* argv[])
             normSteer = powf(normSteer, p);
         }
         if (relAngle < 0.0f) normSteer = -normSteer;
-        int lx = (int)roundf(normSteer * 32767.0f);
+        int rawLx = (int)roundf(normSteer * 32767.0f);
+        int lx = SmoothSteerWorkshop(rawLx, dt, smoothing, &workshopSteerOutput);
 
         // IMU Flick detection
         float currentPeak = fmaxf(fabsf(rawGx), fmaxf(fabsf(rawGy), fabsf(rawGz)));
@@ -937,6 +998,7 @@ int main(int argc, char* argv[])
         bool muteBtn = (d[9] & 0x04) != 0;
         if ((psBtn || muteBtn) && !prevPadCenter) {
             steerCenter = cleanAngle;
+            workshopSteerOutput = 0.0f;
             SendOutput(dev, 120, 120, 0, 230, 255, 0x21, 1, 0); // cyan haptic tap
             tapUntil = now + 60;
         }
@@ -977,35 +1039,42 @@ int main(int argc, char* argv[])
                     int vertDisp = -dy;
                     DWORD elapsed = now - touchStartMs;
 
-                    if (touchGlanceDirX == 0 && touchGlanceDirY == 0) {
-                        if (elapsed <= 600) {
-                            bool flickFired = false;
-                            if (dx < -swipeThresh && fabsf((float)dx) > fabsf((float)dy) * 0.7f) {
-                                touchGlanceDirX = -1;
-                                touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
-                                flickFired = true;
-                            } else if (dx > swipeThresh && (float)dx > fabsf((float)dy) * 0.7f) {
-                                touchGlanceDirX = +1;
-                                touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
-                                flickFired = true;
-                            } else if (vertDisp < -swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-                                touchGlanceDirX = 0;
-                                touchGlanceDirY = -1;
-                                flickFired = true;
-                            } else if (vertDisp > swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-                                touchGlanceDirX = 0;
-                                touchGlanceDirY = 1;
-                                flickFired = true;
-                            }
+                    bool flickFired = false;
+                    bool isHoriz = fabsf((float)dx) > fabsf((float)dy) * 0.7f;
+                    bool isVert  = fabsf((float)dy) > fabsf((float)dx) * 1.2f;
 
-                            if (flickFired) {
-                                touchGlanceHoldUntil = now + 450;
-                                touchStartX = tx;
-                                touchStartY = ty;
-                                touchStartMs = now;
-                                SendOutput(dev, 90, 90, 0, 180, 255, 0x21, 1, 0); // cyan tap
-                            }
+                    if (elapsed <= 600) {
+                        if (dx < -swipeThresh && isHoriz) {
+                            touchGlanceDirX = -1;
+                            touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
+                            flickFired = true;
+                        } else if (dx > swipeThresh && isHoriz) {
+                            touchGlanceDirX = +1;
+                            touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
+                            flickFired = true;
+                        } else if (vertDisp < -swipeThresh && isVert) {
+                            touchGlanceDirX = 0;
+                            touchGlanceDirY = -1;
+                            flickFired = true;
+                        } else if (vertDisp > swipeThresh && isVert) {
+                            touchGlanceDirX = 0;
+                            touchGlanceDirY = 1;
+                            flickFired = true;
                         }
+
+                        if (flickFired) {
+                            touchGlanceHoldUntil = now + 750;
+                            touchStartX = tx;
+                            touchStartY = ty;
+                            touchStartMs = now;
+                            SendOutput(dev, 90, 90, 0, 180, 255, 0x21, 1, 0); // cyan tap
+                        }
+                    }
+
+                    if (elapsed > 350 && fabsf((float)dx) < (float)(swipeThresh * 2 / 3) && fabsf((float)dy) < (float)(swipeThresh * 2 / 3)) {
+                        touchStartX = tx;
+                        touchStartY = ty;
+                        touchStartMs = now;
                     }
                 }
             } else {
@@ -1016,11 +1085,16 @@ int main(int argc, char* argv[])
             if (rem <= 0) {
                 touchGlanceDirX = 0;
                 touchGlanceDirY = 0;
+                if (touching) {
+                    touchStartX = tx;
+                    touchStartY = ty;
+                    touchStartMs = now;
+                }
             } else {
                 float factor = (rem < 120) ? ((float)rem / 120.0f) : 1.0f;
                 float scale = ((float)glanceStrength / 100.0f) * factor;
-                simRx = (int)(touchGlanceDirX * 32767.0f * scale);
-                simRy = (int)(touchGlanceDirY * 32767.0f * scale);
+                simRx = (touchGlanceDirX != 0) ? (int)(touchGlanceDirX * 32767.0f * scale) : 0;
+                simRy = (touchGlanceDirY > 0) ? (int)(touchGlanceDirY * 32767.0f * scale) : 0;
             }
         }
 
@@ -1028,7 +1102,7 @@ int main(int argc, char* argv[])
         else if (touchGlanceDirX == 1 && touchGlanceDirY == 1) flickDirStr = "APEX-R";
         else if (touchGlanceDirX == -1) flickDirStr = "LEFT";
         else if (touchGlanceDirX == 1) flickDirStr = "RIGHT";
-        else if (touchGlanceDirY == -1) flickDirStr = "REARVIEW";
+        else if (touchGlanceDirY == -1) flickDirStr = "BEHIND";
         else if (touchGlanceDirY == 1) flickDirStr = "LOOK-UP";
         else flickDirStr = touching ? "TOUCH" : "CENTER";
 
@@ -1038,6 +1112,7 @@ int main(int argc, char* argv[])
             if (ch == 'q' || ch == 'Q') running = false;
             else if (ch == 'c' || ch == 'C') {
                 steerCenter = cleanAngle;
+                workshopSteerOutput = 0.0f;
                 SendOutput(dev, 120, 120, 0, 230, 255, 0x21, 1, 0);
                 tapUntil = now + 60;
             }
@@ -1061,8 +1136,10 @@ int main(int argc, char* argv[])
             else if (ch == '$') { if (minCutoff < 5.00f) minCutoff += 0.10f; }
             else if (ch == '5') { if (beta > 0.005f) beta -= 0.005f; }
             else if (ch == '%') { if (beta < 0.200f) beta += 0.005f; }
+            else if (ch == '6') { if (smoothing > 0) smoothing -= 5; }
+            else if (ch == '^') { if (smoothing < 100) smoothing += 5; }
             else if (ch == 's' || ch == 'S') {
-                SaveIniConfig(maxAngle, deadzone, curve, minCutoff, beta, biasX, biasY, biasZ);
+                SaveIniConfig(maxAngle, deadzone, curve, smoothing, minCutoff, beta, biasX, biasY, biasZ);
                 SendOutput(dev, 0, 0, 0, 255, 0, 0x21, 1, 0); // Green confirmation flash
                 Sleep(300);
                 SendOutput(dev, 0, 0, 128, 0, 255, 0x21, 1, 0);
@@ -1084,24 +1161,32 @@ int main(int argc, char* argv[])
         bool isFlicking = flickTriggered || (flickUntil > 0 && (int32_t)(flickUntil - now) > 0);
         float currentCutoff = steerFilter.GetCurrentCutoff(gyroRollDps);
 
+        bool glanceRx = (touchGlanceDirX != 0);
+        bool glanceLookBehindY = (touchGlanceDirY == -1);
+
         if (sampleOnly) {
             sampleIdx++;
-            printf("[%3d] Steer:%+6d (%+4.0f%%) Roll:%+5.1f (1€:%+5.1f) | Rate:%+5.1f°/s Cutoff:%4.1fHz | Pad:(%4d,%4d) [%-8s]\n",
-                   sampleIdx, lx, normSteer * 100.0f, gyroAngle, cleanAngle, gyroRollDps, currentCutoff, tx, ty, flickDirStr);
+            printf("[%3d] Steer:%+6d (%+4.0f%%) Roll:%+5.1f (1-Euro:%+5.1f) | Rate:%+5.1f deg/s Cutoff:%4.1fHz | Pad:(%4d,%4d) [%-8s]%s%s\n",
+                   sampleIdx, lx, normSteer * 100.0f, gyroAngle, cleanAngle, gyroRollDps, currentCutoff, tx, ty, flickDirStr,
+                   (glanceRx ? " [GLANCE RX]" : ""),
+                   (glanceLookBehindY ? " [LOOK BEHIND (Y)]" : ""));
             if (sampleIdx >= sampleCount) break;
             Sleep(50);
         } else {
             // Live console dashboard update
             SetConsoleCursorPosition(hStdOut, startCoord);
-            printf("[STEER: %s] lx:%+6d (%+4.0f%%) | Lock:%.0f° Dead:%.1f° Curve:%d    \n",
-                   bar, lx, normSteer * 100.0f, maxAngle, deadzone, curve);
-            printf("Telemetry: Angle (1€ Fused):%+5.1f° | Raw Accel Roll:%+5.1f° | Pitch:%+5.1f° | G:%.2fg    \n",
+            printf("[STEER: %s] lx:%+6d (%+4.0f%%) | Lock:%.0f deg Dead:%.1f deg Curve:%d Smooth:%d%s    \n",
+                   bar, lx, ((float)lx / 327.67f), maxAngle, deadzone, curve, smoothing,
+                   (smoothing == 50 ? " (Default Rack)" : (smoothing == 0 || smoothing == 100 ? " (Direct 1:1)" : "")));
+            printf("Telemetry: Angle (1-Euro Fused):%+5.1f deg | Raw Accel Roll:%+5.1f deg | Pitch:%+5.1f deg | G:%.2fg    \n",
                    cleanAngle, roll, pitch, accMag / 8192.0f);
-            printf("1€ Filter: Cutoff:%4.1f Hz (Min:%.2fHz, Beta:%.3f) | Gyro Rate:%+5.1f°/s %s    \n",
+            printf("1-Euro Filter: Cutoff:%4.1f Hz (Min:%.2fHz, Beta:%.3f) | Gyro Rate:%+5.1f deg/s %s    \n",
                    currentCutoff, minCutoff, beta, gyroRollDps, (isFlicking ? "[*FLICK*]" : "       "));
             printf("Pedals:    L2 Brake:%3u/255 | R2 Throttle:%3u/255                                      \n", l2, r2);
-            printf("Trackpad:  Pos:(%4d,%4d) d:(%+4d,%+4d) Flick:[%-8s] RightStick:(%+6d,%+6d)%s    \n",
-                   tx, ty, dx, dy, flickDirStr, simRx, simRy, (tp ? " [CLICK]" : "        "));
+            printf("Trackpad:  Pos:(%4d,%4d) d:(%+4d,%+4d) Flick:[%-8s] RightStick:(%+6d,%+6d)%s%s%s    \n",
+                   tx, ty, dx, dy, flickDirStr, simRx, simRy, (tp ? " [CLICK]" : "        "),
+                   (glanceRx ? " [GLANCE RX]" : ""),
+                   (glanceLookBehindY ? " [LOOK BEHIND (Y)]" : ""));
             fflush(stdout);
             Sleep(25);
         }

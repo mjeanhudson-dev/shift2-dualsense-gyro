@@ -114,7 +114,7 @@ static Config DefaultConfig()
 {
     Config c = {};
     c.motionStart = 1;  c.motionMode = 0;  c.motionInvert = 0;
-    c.motionMax = 28;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 100;
+    c.motionMax = 75;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 50;
     c.oneEuroMinCutoff = 120; c.oneEuroBeta = 40;
     c.gyroBiasX = 0.0f; c.gyroBiasY = 0.0f; c.gyroBiasZ = 0.0f;
     c.trig = 1;
@@ -139,7 +139,7 @@ static Config DefaultConfig()
     c.l3Handbrake = 1;  c.psBtn = 1;
     c.steerVibe = 1;    c.steerVibeMax = 25;     c.steerVibeDead = 10; c.steerVibeCurve = 100;  c.steerVibeDir = 1;
     c.menuButtonVibe = 1;       c.menuButtonPower = 55;     c.menuButtonMs = 25;
-    c.menuTriggerMode = 1;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;
+    c.menuTriggerMode = 0;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;
     c.threadBoost = 1;
     c.debug = 1;
     return c;
@@ -421,11 +421,11 @@ static volatile LONG     g_connected = 0;
 static volatile LONG     g_stop = 0;
 static volatile LONG     g_motionOn = 0;
 static volatile LONG     g_raceActive = 0;           // 1 when actively driving/racing; 0 in menus
+static volatile DWORD    g_lastRaceActivityMs = 0;
 static volatile LONG     g_crash = 0;                // crash shock active (set by the game thread)
 static volatile DWORD    g_crashUntil = 0;
 static volatile LONG     g_getStateCalls = 0;        // game's XInputGetState(0) calls since the last status line
 static volatile DWORD    g_lastGetStateMs = 0;       // timestamp of last XInputGetState call
-static volatile LONG     g_gridEntryPending = 0;     // set by game thread when track load gap > 2500ms
 
 // Everything below is only touched with g_cs held.
 static XGamepad          g_pad;
@@ -784,6 +784,7 @@ static void SetRumble(BYTE l, BYTE r)
             LOG_ONCE("game sent rumble to XInput pad 0 (L=%d R=%d)", (int)l, (int)r);
             ATOMIC_STORE(g_raceActive, 1);
             ATOMIC_STORE(g_lastRumbleMs, NowMs());
+            ATOMIC_STORE(g_lastRaceActivityMs, NowMs());
         }
         if (cfg.crashEnable) {
             int prev = g_rumbleL > g_rumbleR ? g_rumbleL : g_rumbleR;
@@ -887,9 +888,8 @@ struct OneEuroFilter {
 static struct {
     bool have, prevPS, prevMic, absOn, leanOn, lockHeld, prevCrash, bootActive, leadInit, glanceLatch;
     bool inRaceState, prevInRace, prevMenuL2, prevMenuR2;
-    bool gridInitPending, rVibeActive;
-    int gridStableCount, lastRLevel;
-    DWORD gridEntryStart;
+    bool rVibeActive;
+    int lastRLevel;
     bool touchActive;
     BYTE touchId;
     int touchStartX, touchStartY;
@@ -966,9 +966,22 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
     if (dt < 0.0f) dt = 0.0f;
     if (dt > 0.05f) dt = 0.05f;
     float predicted = Wrap(M.angle + gyroRollDps * dt);
-    if (accelTrusted && dt > 0.0f) {
+    bool reclined = (fabsf(M.pitch) > 30.0f);
+    if (accelTrusted && !reclined && dt > 0.0f) {
         bool vibrating = (g_steerVibeL > 0 || g_steerVibeR > 0 || g_kickOn || g_rumbleL > 0 || g_rumbleR > 0);
-        float tau = vibrating ? 0.85f : ((fabsf(gyroRollDps) > 60.0f) ? 0.35f : 0.22f);
+        bool inRace = !cfg.inRaceOnly || (ATOMIC_LOAD(g_raceActive) != 0);
+        float relPred = fabsf(Wrap(predicted - M.center));
+        // Steady-state corner hold stability:
+        // When driving in race and holding a corner (|predicted - center| > 5.0 deg),
+        // ensure steady-state corner holds do not decay toward center (tau >= 25.0s during sustained holds).
+        float tau;
+        if (inRace && relPred > 5.0f) {
+            tau = 25.0f;
+        } else if (fabsf(gyroRollDps) > 2.0f) {
+            tau = 8.0f;
+        } else {
+            tau = vibrating ? 0.85f : 0.22f;
+        }
         float correction = dt / (tau + dt);
         predicted = Wrap(predicted + Wrap(accelRoll - predicted) * correction);
     }
@@ -985,6 +998,7 @@ static int SmoothSteer(int target, float dt)
         return target;
     }
     if (dt <= 0.0f) return (int)lroundf(M.steerOutput);
+    if (dt > 0.05f) dt = 0.05f;
     float cur = M.steerOutput;
     float tgt = (float)target;
 
@@ -1040,8 +1054,8 @@ static int Lean()
 // Swiping down glances behind (look back / rearview mirror).
 // Returns smoothly to center upon release or after natural hold period.
 static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now,
-                               int* outRx, int* outRy,
-                               int* clickTapL, int* clickTapR, int* clickTapMs)
+                               int* outRx, int* outRy, WORD* outBtns = NULL,
+                               int* clickTapL = NULL, int* clickTapR = NULL, int* clickTapMs = NULL)
 {
     if (outRx) *outRx = 0;
     if (outRy) *outRy = 0;
@@ -1058,8 +1072,11 @@ static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now
         // Smooth return to center during final 120ms of release
         float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
         float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
-        if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
-        if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+        if (outRx && M.touchGlanceDir != 0) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+        if (outRy && M.touchGlanceDirY > 0) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+        if (outBtns) {
+            if (M.touchGlanceDirY == -1) *outBtns |= XB_Y;
+        }
         return;
     }
 
@@ -1077,8 +1094,11 @@ static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now
         } else {
             float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
             float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
-            if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
-            if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+            if (outRx && M.touchGlanceDir != 0) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+            if (outRy && M.touchGlanceDirY > 0) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+            if (outBtns) {
+                if (M.touchGlanceDirY == -1) *outBtns |= XB_Y;
+            }
         }
         return;
     }
@@ -1090,99 +1110,54 @@ static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now
     int swipeThresh = Clamp(cfg.glanceDead > 0 ? cfg.glanceDead * 10 : 120, 40, 400);
     int holdThresh  = swipeThresh * 2 / 3;
 
-    // Detect swipe/flick gesture or reversal/transition:
+    // Detect swipe/flick gesture, repeated swipes in same direction, or transitions:
     bool flickTriggered = false;
-    if (M.touchGlanceDir == 0 && M.touchGlanceDirY == 0) {
-        if (elapsed <= 600) {
-            if (dx < -swipeThresh && fabsf((float)dx) > fabsf((float)dy) * 0.7f) {
-                M.touchGlanceDir = -1; // Snap look left
-                if (vertDisp > (swipeThresh / 2)) {
-                    M.touchGlanceDirY = 1; // Apex look up-left
-                    Log("touchpad flick: glance APEX-LEFT (dx=%d, dy=%d, elapsed=%lums)", dx, dy, (unsigned long)elapsed);
-                } else {
-                    M.touchGlanceDirY = 0;
-                    Log("touchpad flick: glance LEFT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
-                }
-                flickTriggered = true;
-            } else if (dx > swipeThresh && (float)dx > fabsf((float)dy) * 0.7f) {
-                M.touchGlanceDir = +1; // Snap look right
-                if (vertDisp > (swipeThresh / 2)) {
-                    M.touchGlanceDirY = 1; // Apex look up-right
-                    Log("touchpad flick: glance APEX-RIGHT (dx=%d, dy=%d, elapsed=%lums)", dx, dy, (unsigned long)elapsed);
-                } else {
-                    M.touchGlanceDirY = 0;
-                    Log("touchpad flick: glance RIGHT (dx=%d, elapsed=%lums)", dx, (unsigned long)elapsed);
-                }
-                flickTriggered = true;
-            } else if (vertDisp < -swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-                // Swipe DOWN: rearview look back
-                M.touchGlanceDir = 0;
-                M.touchGlanceDirY = -1;
-                Log("touchpad flick: glance REARVIEW (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
-                flickTriggered = true;
-            } else if (vertDisp > swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-                // Swipe UP: look up / high cockpit
-                M.touchGlanceDir = 0;
-                M.touchGlanceDirY = 1;
-                Log("touchpad flick: glance HIGH COCKPIT (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
-                flickTriggered = true;
-            }
+    bool isHoriz = fabsf((float)dx) > fabsf((float)dy) * 0.7f;
+    bool isVert  = fabsf((float)dy) > fabsf((float)dx) * 1.2f;
 
-            if (flickTriggered) {
-                M.touchGlanceHoldUntil = now + 450; // Hold glance for at least 450ms
-                M.touchStartX = tx;
-                M.touchStartY = ty;
-                M.touchStartMs = now;
-                if (clickTapL) *clickTapL = 90;
-                if (clickTapR) *clickTapR = 90;
-                if (clickTapMs) *clickTapMs = 30;
-            }
+    if (elapsed <= 600) {
+        if (dx < -swipeThresh && isHoriz) {
+            M.touchGlanceDir = -1; // Snap look left
+            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
+            flickTriggered = true;
+            Log("touchpad flick: glance %s (dx=%d, dy=%d, elapsed=%lums)",
+                M.touchGlanceDirY ? "APEX-LEFT" : "LEFT", dx, dy, (unsigned long)elapsed);
+        } else if (dx > swipeThresh && isHoriz) {
+            M.touchGlanceDir = +1; // Snap look right
+            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
+            flickTriggered = true;
+            Log("touchpad flick: glance %s (dx=%d, dy=%d, elapsed=%lums)",
+                M.touchGlanceDirY ? "APEX-RIGHT" : "RIGHT", dx, dy, (unsigned long)elapsed);
+        } else if (vertDisp < -swipeThresh && isVert) {
+            // Swipe DOWN: rearview look behind (Shift 2 native Look Behind XB_Y)
+            M.touchGlanceDir = 0;
+            M.touchGlanceDirY = -1;
+            flickTriggered = true;
+            Log("touchpad flick: glance LOOK BEHIND (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
+        } else if (vertDisp > swipeThresh && isVert) {
+            // Swipe UP: look up / high cockpit
+            M.touchGlanceDir = 0;
+            M.touchGlanceDirY = 1;
+            flickTriggered = true;
+            Log("touchpad flick: glance HIGH COCKPIT (dy=%d, elapsed=%lums)", dy, (unsigned long)elapsed);
         }
-        // If finger has rested or lingered without flicking, roll the starting point forward
-        if (elapsed > 350 && fabsf((float)dx) < (float)holdThresh && fabsf((float)dy) < (float)holdThresh) {
+
+        if (flickTriggered) {
+            M.touchGlanceHoldUntil = now + 750; // Hold glance for 750ms so 500ms camera damping holds fully
             M.touchStartX = tx;
             M.touchStartY = ty;
             M.touchStartMs = now;
+            if (clickTapL) *clickTapL = 90;
+            if (clickTapR) *clickTapR = 90;
+            if (clickTapMs) *clickTapMs = 30;
         }
-    } else {
-        // A glance is active: check for immediate reversal or direction change
-        if (M.touchGlanceDir != -1 && dx < -swipeThresh) {
-            M.touchGlanceDir = -1;
-            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
-            M.touchGlanceHoldUntil = now + 450;
-            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
-            if (clickTapL) *clickTapL = 90;
-            if (clickTapR) *clickTapR = 90;
-            if (clickTapMs) *clickTapMs = 30;
-            Log("touchpad flick: glance REVERSE to LEFT (dx=%d)", dx);
-        } else if (M.touchGlanceDir != +1 && dx > swipeThresh) {
-            M.touchGlanceDir = +1;
-            M.touchGlanceDirY = (vertDisp > (swipeThresh / 2)) ? 1 : 0;
-            M.touchGlanceHoldUntil = now + 450;
-            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
-            if (clickTapL) *clickTapL = 90;
-            if (clickTapR) *clickTapR = 90;
-            if (clickTapMs) *clickTapMs = 30;
-            Log("touchpad flick: glance REVERSE to RIGHT (dx=%d)", dx);
-        } else if (M.touchGlanceDirY != -1 && vertDisp < -swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-            M.touchGlanceDir = 0;
-            M.touchGlanceDirY = -1;
-            M.touchGlanceHoldUntil = now + 450;
-            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
-            if (clickTapL) *clickTapL = 90;
-            if (clickTapR) *clickTapR = 90;
-            if (clickTapMs) *clickTapMs = 30;
-            Log("touchpad flick: glance REVERSE to REARVIEW (dy=%d)", dy);
-        } else if (M.touchGlanceDirY != 1 && vertDisp > swipeThresh && fabsf((float)dy) > fabsf((float)dx) * 1.2f) {
-            M.touchGlanceDir = 0;
-            M.touchGlanceDirY = 1;
-            M.touchGlanceHoldUntil = now + 450;
-            M.touchStartX = tx; M.touchStartY = ty; M.touchStartMs = now;
-            if (clickTapL) *clickTapL = 90;
-            if (clickTapR) *clickTapR = 90;
-            if (clickTapMs) *clickTapMs = 30;
-            Log("touchpad flick: glance REVERSE to HIGH COCKPIT (dy=%d)", dy);
-        }
+    }
+
+    // If finger has rested or lingered without flicking, roll the starting point forward
+    if (elapsed > 350 && fabsf((float)dx) < (float)holdThresh && fabsf((float)dy) < (float)holdThresh) {
+        M.touchStartX = tx;
+        M.touchStartY = ty;
+        M.touchStartMs = now;
     }
 
     // Hold expiry and smooth recenter decay:
@@ -1199,8 +1174,11 @@ static void ProcessTouchGlance(bool touching, BYTE id, int tx, int ty, DWORD now
 
     float factor = (remaining < 120) ? ((float)remaining / 120.0f) : 1.0f;
     float strengthScale = (cfg.glanceStrength / 100.0f) * factor;
-    if (outRx) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
-    if (outRy) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+    if (outRx && M.touchGlanceDir != 0) *outRx = (int)(M.touchGlanceDir * 32767.0f * strengthScale);
+    if (outRy && M.touchGlanceDirY > 0) *outRy = (int)(M.touchGlanceDirY * 32767.0f * strengthScale);
+    if (outBtns) {
+        if (M.touchGlanceDirY == -1) *outBtns |= XB_Y;
+    }
 }
 
 // Physical left-stick shaping for steering. Input dead zone, then the travel up to `Saturation` is
@@ -1302,26 +1280,31 @@ static void Parse(const uint8_t* b, DWORD n)
     }
 
     // Active race driving detection:
-    // Pedal engagement (throttle > 25, brake > 25) or game FFB rumble (> 0)
-    bool driving = (d[5] > 25) || (d[4] > 25) || (g_rumbleL > 0) || (g_rumbleR > 0);
+    // Driving is flagged only by throttle (d[5] > 35) or active game rumble (g_rumbleL > 0 || g_rumbleR > 0).
+    // Pulling L2 in menus NEVER triggers race mode or heavy race brake resistance/ABS.
+    bool driving = (d[5] > 35) || (g_rumbleL > 0) || (g_rumbleR > 0);
     if (driving) {
         M.lastRaceActivity = now;
-        if (!M.inRaceState) {
+        ATOMIC_STORE(g_lastRaceActivityMs, now);
+        if (!M.inRaceState || ATOMIC_LOAD(g_raceActive) == 0) {
             M.inRaceState = true;
             ATOMIC_STORE(g_raceActive, 1);
-            Log("[State] Race driving detected (throttle=%u, brake=%u, rumble=%u/%u) -> Racing haptics ACTIVE.",
-                d[5], d[4], g_rumbleL, g_rumbleR);
+            Log("[State] Race driving detected (throttle=%u, rumble=%u/%u) -> Racing haptics ACTIVE.",
+                d[5], g_rumbleL, g_rumbleR);
         }
-    } else if (M.inRaceState) {
+    } else if (M.inRaceState || ATOMIC_LOAD(g_raceActive) != 0) {
         // Return to menu mode after raceTimeoutMs of complete pedal & rumble inactivity
-        if ((int32_t)(now - M.lastRaceActivity) > (int32_t)cfg.raceTimeoutMs) {
+        DWORD lastAct = ATOMIC_LOAD(g_lastRaceActivityMs);
+        if (M.lastRaceActivity > lastAct) lastAct = M.lastRaceActivity;
+        if ((int32_t)(now - lastAct) > (int32_t)cfg.raceTimeoutMs) {
             M.inRaceState = false;
             ATOMIC_STORE(g_raceActive, 0);
             Log("[State] Driving idle for >%dms -> Menu haptics mode.", cfg.raceTimeoutMs);
         }
     }
 
-    bool inRace = !cfg.inRaceOnly || M.inRaceState;
+    bool inRace = !cfg.inRaceOnly || (ATOMIC_LOAD(g_raceActive) != 0);
+    M.inRaceState = (ATOMIC_LOAD(g_raceActive) != 0);
 
     // Detect race driving transition
     bool raceChanged = (inRace != M.prevInRace);
@@ -1455,51 +1438,20 @@ static void Parse(const uint8_t* b, DWORD n)
         }
         M.angle = rollOk ? roll : 0.0f;
         M.cleanAngle = M.angle;
-        M.center = M.angle;
+        M.center = 0.0f;
         M.oneEuro.Reset(M.angle);
         M.pitch = M.pitchCenter = pitch;
         M.leanOn = cfg.leanStart != 0;
         M.have = true;
         M.steerOutput = 0.0f;
     } else {
+        float k = (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) ? 1.0f : (cfg.motionSmooth / 100.0f);
+        M.pitch += (pitch - M.pitch) * k;
         MotionStep(roll, accelTrusted, gyroRollDps, motionDt);
         float mc = (float)cfg.oneEuroMinCutoff / 100.0f;
         float b  = (float)cfg.oneEuroBeta / 1000.0f;
         M.cleanAngle = (cfg.oneEuroMinCutoff > 0) ? M.oneEuro.FilterWithRate(M.angle, gyroRollDps, motionDt, mc, b) : M.angle;
     }
-
-    // Starting grid auto-zeroing during the 3-2-1 countdown after a track loading gap (>2500ms):
-    if (ATOMIC_LOAD(g_gridEntryPending)) {
-        ATOMIC_STORE(g_gridEntryPending, 0);
-        M.gridInitPending = true;
-        M.gridEntryStart = now;
-        M.gridStableCount = 0;
-        Log("[Grid] Track loading transition detected: awaiting starting grid stabilization");
-    }
-
-    if (M.gridInitPending) {
-        bool steady = (fabsf(M.gyroRollRate) < 12.0f && rollOk);
-        if (steady) {
-            M.gridStableCount++;
-        } else {
-            M.gridStableCount = 0;
-        }
-        // Auto-zero once hands settle on the starting grid (5 consecutive steady frames ~ 20-50ms)
-        // or timeout after 5000ms if constantly moving:
-        bool timeout = (now - M.gridEntryStart) > 5000;
-        if (M.gridStableCount >= 5 || timeout) {
-            M.center = M.angle;
-            M.steerOutput = 0.0f;
-            M.pitchCenter = M.pitch;
-            M.oneEuro.Reset(M.angle);
-            M.gridInitPending = false;
-            M.gridStableCount = 0;
-            Log("[Grid] Auto-zeroed center at %.1f deg for race start (timeout=%d)", (double)M.angle, timeout ? 1 : 0);
-        }
-    }
-
-    float k = (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) ? 1.0f : (cfg.motionSmooth / 100.0f);
-    M.pitch += (pitch - M.pitch) * k;
 
     bool ps = (b2 & 0x01) != 0, tp = (b2 & 0x02) != 0, mic = (b2 & 0x04) != 0;
     int btnKl = 0, btnKr = 0, btnKms = 0;
@@ -1609,7 +1561,7 @@ static void Parse(const uint8_t* b, DWORD n)
     if (abs(rx) < 1500) rx = 0;
     int glanceRx = 0, glanceRy = 0;
     if (cfg.glance && !tp && !M.glanceLatch) {
-        ProcessTouchGlance(touching, touchId, tx, ty, now, &glanceRx, &glanceRy, &btnKl, &btnKr, &btnKms);
+        ProcessTouchGlance(touching, touchId, tx, ty, now, &glanceRx, &glanceRy, &w, &btnKl, &btnKr, &btnKms);
         rx = Clamp(rx + glanceRx, -32768, 32767);
         ry = Clamp(ry + glanceRy, -32768, 32767);
     }
@@ -1720,9 +1672,17 @@ static void Parse(const uint8_t* b, DWORD n)
         }
     }
 
+    uint8_t lOut = d[4];
+    if (!inRace && lOut < 15) {
+        lOut = 0; // 15-count deadzone in menus eliminates resting finger scrolling bleed
+    }
+    if (!inRace && rOut < 15) {
+        rOut = 0; // 15-count deadzone in menus eliminates resting finger scrolling bleed
+    }
+
     XGamepad p;
     p.wButtons = w;
-    p.bLeftTrigger = d[4];
+    p.bLeftTrigger = lOut;
     p.bRightTrigger = rOut;
     p.lx = (SHORT)Clamp(lxOut, -32768, 32767);
     p.ly = Axis(d[1], true);
@@ -1863,7 +1823,6 @@ static DWORD WINAPI ReaderThread(LPVOID)
         M.bootActive = cfg.boot != 0;                   // ignition sequence
         M.bootStart = now0;
         ATOMIC_STORE(g_raceActive, 0);
-        ATOMIC_STORE(g_gridEntryPending, 0);
 
         EnterCriticalSection(&g_cs);
         g_dev = h;
@@ -1976,11 +1935,7 @@ __declspec(dllexport) DWORD WINAPI XInputGetState(DWORD idx, XState* st)
     if (idx == 0 && ATOMIC_LOAD(g_connected)) {
         InterlockedIncrement(&g_getStateCalls);
         DWORD now = NowMs();
-        DWORD last = ATOMIC_LOAD(g_lastGetStateMs);
         ATOMIC_STORE(g_lastGetStateMs, now);
-        if (last != 0 && (DWORD)(now - last) > 2500) {
-            ATOMIC_STORE(g_gridEntryPending, 1);
-        }
         EnterCriticalSection(&g_cs);
         st->packet = g_packet;
         st->pad = g_pad;
