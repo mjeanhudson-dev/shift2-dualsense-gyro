@@ -6,6 +6,12 @@
 > 1. **DO NOT** create or inflate synthetic mock test suites (`xinput_proxy_pressure_test.cpp`). Do not cycle through endless mock checks that conflict or undo each other's work.
 > 2. **DO NOT** rewrite or regress locked mathematical algorithms documented below.
 > 3. Use `gyro_workshop.exe` to test and verify real physical DualSense hardware behavior directly with the user.
+> 4. **Consult Repository Links Before Starting Work:**
+>    - **Local Task & Claim Board:** [`BOUNTY_BOARD.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/BOUNTY_BOARD.md)
+>    - **Milestone & Handoff Ledger:** [`PROJECT_HANDOFF.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/PROJECT_HANDOFF.md)
+>    - **Collaboration Handbook & Invariants:** [`MULTIAGENT_PROTOCOLS.md`](file:///c:/Users/Zachariah/Documents/antigravity/vibrant-darwin/MULTIAGENT_PROTOCOLS.md)
+>    - **Central Cross-Project Registry:** [`../BOUNTY_BOARD.md`](file:///c:/Users/Zachariah/Documents/antigravity/BOUNTY_BOARD.md)
+>    - **Global Reusable Domain Catalog:** [`../GLOBAL_KNOWLEDGE_INDEX.md`](file:///c:/Users/Zachariah/Documents/antigravity/GLOBAL_KNOWLEDGE_INDEX.md)
 
 ---
 
@@ -208,20 +214,27 @@ Rather than running synthetic mock unit tests, `gyro_workshop.exe` provides a co
 
 ---
 
-## 7. Synchronization Manifest
+## 7. Synchronization Manifest & Cryptographic Parity
 
 All deployment artifacts MUST remain byte-identical across:
-1. Workspace: `c:\Users\Zachariah\Documents\antigravity\vibrant-darwin\`
-2. Desktop Staging: `C:\Users\Zachariah\Desktop\Shift2\`
-3. Game Directory: `C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\`
+1. **Workspace:** `c:\Users\Zachariah\Documents\antigravity\vibrant-darwin\`
+2. **Desktop Staging:** `C:\Users\Zachariah\Desktop\Shift2\`
+3. **Game Directory:** `C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\`
 
-Core files:
-- `xinput1_3.dll` (32-bit proxy DLL)
-- `shift2_dualsense.ini` (configuration)
-- `gyro_workshop.exe` (live hardware test & troubleshooting tool)
-- `xinput_proxy_pressure_test.exe` (PINPOINT verification test runner)
-- `xinput_proxy.cpp` / `xinput_proxy_pressure_test.cpp` / `gyro_workshop.cpp`
-- `build.bat` (unified builder)
+### Verified Checksums (SHA256)
+
+| Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `xinput1_3.dll` | 95,744 | `3934C7EEC9B01091E2536025CB1EB9403C98F0A31DF03764DB4AFEB345EC5002` | Verified | Verified | Verified |
+| `shift2_dualsense.ini` | 15,198 | `AA702F7962C5C56198A45FFAE0582991B48B3B68E57EAF1862E3690E5A9AF705` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `7EBBBDA0D311EFFB298542606F151CB5C9B15AB6EB111CD3B70DCA2E0FF573C5` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `1602264DF1DDC7CF8372D166BD31B119535CE10390CEACFD1A5812B8757C8EF7` | Verified | Verified | Verified |
+
+### Automated Parity Verification
+Incoming agents can verify full cryptographic parity across all three locations with a single command:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\verify_repo.ps1
+```
 
 ---
 

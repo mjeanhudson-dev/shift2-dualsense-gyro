@@ -45,6 +45,11 @@ copy /y xinput1_3.dll "%DEST%%NAME%.dll" >nul
 if errorlevel 1 goto copyfail
 if exist xinput_proxy_pressure_test.exe copy /y xinput_proxy_pressure_test.exe "%DEST%" >nul
 if exist gyro_workshop.exe copy /y gyro_workshop.exe "%DEST%" >nul
+if exist SHARED_REPOSITORY.md copy /y SHARED_REPOSITORY.md "%DEST%" >nul
+if exist PROJECT_HANDOFF.md copy /y PROJECT_HANDOFF.md "%DEST%" >nul
+if exist BOUNTY_BOARD.md copy /y BOUNTY_BOARD.md "%DEST%" >nul
+if exist MULTIAGENT_PROTOCOLS.md copy /y MULTIAGENT_PROTOCOLS.md "%DEST%" >nul
+if exist verify_repo.ps1 copy /y verify_repo.ps1 "%DEST%" >nul
 if exist "%DEST%shift2_dualsense.ini" goto keepini
 copy shift2_dualsense.ini "%DEST%" >nul
 goto inidone
