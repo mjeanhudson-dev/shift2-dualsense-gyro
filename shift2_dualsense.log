@@ -1,0 +1,18 @@
+[ 8111755] proxy loaded by C:\Users\Zachariah\Documents\antigravity\vibrant-darwin\test_motion.exe
+[ 8111755] motion: start=1 mode=1 invert=0 max=45 dead=2 curve=100 smooth=25
+[ 8111755] triggers: on=1 brake(z2,3->7) throttle(z0,1->1) rumbleToTrig=1 thr=40 throttleVibeMax=0
+[ 8111755] abs: on=1 thr=215 release=20 freq=40 str=8 | grip: on=1 boost=3 | kick: shift=1 abs=1 power=180 ms=70 lock=0/130
+[ 8111755] crash: on=1 thr=200 jump=120 ms=600 | tach: on=1 redline=93 auto=0 inverse=0 | limiter: on=0 z8 s3 25Hz
+[ 8111755] controls: l3Handbrake=1 | flick: on=0 thr=700 ms=150 lock=600 btn=2 | glance: on=1 str=100 dead=12
+[ 8111755] handling: on=1 stickDead=3 gameDead=0 curve=100 sat=97 lead=20/40ms traction=1/15 | boost=1
+[ 8111755] light: on=1 telemetry=1 strobe=1@10Hz boot=1 leds=1 mic=1 flip=0 | lean: start=0 invert=0 max=25 dead=3 str=100
+[ 8111756] MMCSS 'Games' scheduling granted
+[ 8111757] USB DualSense opened
+[ 8111759] first input report received (64 bytes)
+[ 8111759] report bytes: 01 81 7F 7F 81 00 00 8A 08 00 00 00 EB 11 60 52 00 00 FE FF 00 00 7D 03 D8 1C C4 0C 7F 0C 80 5F 15 C1 5F 03 00 BB 17 60 
+[ 8111759] status: getState/period=0 motion=1 tiltSteer=0 glance=0 flick=0 -> game lx=0 rx=-256 ry=-256 L2=0 R2=0 btn=0000
+[ 8111965] game called XInputGetState (first idx=0, pad connected=1)
+[ 8112759] status: getState/period=4 motion=1 tiltSteer=0 glance=0 flick=0 -> game lx=0 rx=-256 ry=-256 L2=0 R2=0 btn=0000
+[ 8113759] status: getState/period=5 motion=1 tiltSteer=0 glance=0 flick=0 -> game lx=0 rx=-256 ry=-256 L2=0 R2=0 btn=0000
+[ 8113788] process detach: releasing triggers
+[ 8113791] DualSense disconnected
