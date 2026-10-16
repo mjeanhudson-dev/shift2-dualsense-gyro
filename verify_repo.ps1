@@ -56,12 +56,14 @@ $repoFiles = @(
     (Join-Path $globalRoot "init_project_repo.ps1")
 )
 
-# Also check excited-hertz if directory exists
-$excitedHertzDir = Join-Path $globalRoot "excited-hertz"
-if (Test-Path $excitedHertzDir) {
-    $repoFiles += (Join-Path $excitedHertzDir "BOUNTY_BOARD.md")
-    $repoFiles += (Join-Path $excitedHertzDir "PROJECT_HANDOFF.md")
-    $repoFiles += (Join-Path $excitedHertzDir "MULTIAGENT_PROTOCOLS.md")
+# Also check other projects in globalRoot (e.g., excited-hertz, vibrant-lavoisier)
+$otherProjects = Get-ChildItem -Path $globalRoot -Directory | Where-Object { $_.FullName -ne $workspace }
+foreach ($proj in $otherProjects) {
+    if (Test-Path (Join-Path $proj.FullName "BOUNTY_BOARD.md")) {
+        $repoFiles += (Join-Path $proj.FullName "BOUNTY_BOARD.md")
+        $repoFiles += (Join-Path $proj.FullName "PROJECT_HANDOFF.md")
+        $repoFiles += (Join-Path $proj.FullName "MULTIAGENT_PROTOCOLS.md")
+    }
 }
 
 foreach ($file in $repoFiles) {
