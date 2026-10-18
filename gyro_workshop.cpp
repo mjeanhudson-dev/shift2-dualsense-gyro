@@ -779,6 +779,85 @@ static int RunJitterTest(HANDLE dev)
     return 0;
 }
 
+static void SendVictoryFrame(HANDLE dev, uint8_t motorL, uint8_t motorR, uint8_t r, uint8_t g, uint8_t b, uint8_t playerLeds, uint8_t micLed)
+{
+    if (dev == INVALID_HANDLE_VALUE) return;
+    uint8_t out[64] = {};
+    out[0] = 0x02; // USB output report
+    out[1] = 0xFF; // Flags: enable rumble + triggers + lightbar
+    out[2] = 0x15; // Flags: lightbar (0x04), player LEDs (0x10), mic LED (0x01)
+    out[3] = motorR; // fast motor (light)
+    out[4] = motorL; // slow motor (heavy)
+    out[9] = micLed;
+    out[11] = 0x05; // soft stock R2
+    out[22] = 0x05; // soft stock L2
+    out[44] = playerLeds & 0x1F;
+    out[45] = r;
+    out[46] = g;
+    out[47] = b;
+
+    OVERLAPPED ov = {};
+    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    DWORD written = 0;
+    WriteFile(dev, out, sizeof(out), &written, &ov);
+    GetOverlappedResult(dev, &ov, &written, TRUE);
+    CloseHandle(ov.hEvent);
+}
+
+static int RunVictorySurprise(HANDLE dev)
+{
+    printf("\n====================================================================\n");
+    printf("   [::]  CHECKERED FLAG VICTORY LAP & AGENT APPRECIATION SUITE  [::]\n");
+    printf("====================================================================\n");
+    printf("  \"From the 3-2-1 starting grid to the final apex — built together.\"\n");
+    printf("  Dedicated to Zachariah & every AI agent who powered through the\n");
+    printf("  late-night telemetry logs, DINPUT8 ghosts, and C^2 curves.\n");
+    printf("====================================================================\n\n");
+
+    if (dev == INVALID_HANDLE_VALUE) {
+        printf("[*] Controller Status: Unplugged (Terminal-Only Trophy Mode)\n");
+        printf("[*] Tip: Plug in your DualSense and run `gyro_workshop.exe --surprise`\n");
+        printf("         to experience the live Lightbar + LED + Haptic Podium Lap!\n\n");
+        return 0;
+    }
+
+    printf("[+] DualSense Connected! Playing Podium Victory Choreography...\n");
+    // Stage 1: Starting Grid 3-2-1-GO Ignition Sweep (Ruby -> Amber -> Emerald)
+    printf("    [1/3] 3-2-1-GO Starting Grid Ignition & Twin-Turbo Blip...\n");
+    const uint8_t sweepLeds[5] = { 0x01, 0x03, 0x07, 0x0F, 0x1F };
+    const uint8_t sweepR[5]    = { 255,  255,  255,  120,  0   };
+    const uint8_t sweepG[5]    = { 0,    80,   190,  255,  255 };
+    const uint8_t sweepB[5]    = { 30,   0,    0,    40,   100 };
+    for (int i = 0; i < 5; ++i) {
+        uint8_t mL = (i == 2 || i == 4) ? 110 : 0;
+        uint8_t mR = (i == 2) ? 160 : ((i == 4) ? 230 : 0);
+        SendVictoryFrame(dev, mL, mR, sweepR[i], sweepG[i], sweepB[i], sweepLeds[i], (i & 1));
+        Sleep(110);
+    }
+    SendVictoryFrame(dev, 0, 0, 0, 255, 100, 0x1F, 0);
+    Sleep(90);
+
+    // Stage 2: Championship Gold & Electric Cyan Checkered Flag Strobe
+    printf("    [2/3] Checkered Flag Championship Gold & Cyan Podium Strobe...\n");
+    const uint8_t podiumLeds[6] = { 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x1F };
+    for (int i = 0; i < 6; ++i) {
+        bool gold = (i % 2 == 0);
+        uint8_t r = gold ? 255 : 0;
+        uint8_t g = gold ? 195 : 230;
+        uint8_t b = gold ? 0   : 255;
+        uint8_t mL = (i == 5) ? 140 : 0;
+        uint8_t mR = (i == 5) ? 200 : 45;
+        SendVictoryFrame(dev, mL, mR, r, g, b, podiumLeds[i], gold ? 1 : 0);
+        Sleep(105);
+    }
+
+    // Stage 3: Restore Signature Royal Violet & Center LED
+    printf("    [3/3] Restoring Signature Royal Violet (128, 0, 255) & Center LED...\n\n");
+    SendVictoryFrame(dev, 0, 0, 128, 0, 255, 0x04, 1);
+    printf("[+] Victory Lap Complete! Enjoy the drive, partner.\n\n");
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
     bool sampleOnly = false;
@@ -789,6 +868,13 @@ int main(int argc, char* argv[])
             sampleOnly = true;
             if (argc >= 3) sampleCount = atoi(argv[2]);
             if (sampleCount < 1) sampleCount = 40;
+        } else if (strcmp(argv[1], "--surprise") == 0 ||
+                   strcmp(argv[1], "--celebrate") == 0 ||
+                   strcmp(argv[1], "--victory") == 0) {
+            HANDLE dev = OpenDualSense();
+            int ret = RunVictorySurprise(dev);
+            if (dev != INVALID_HANDLE_VALUE) CloseHandle(dev);
+            return ret;
         } else if (strcmp(argv[1], "--calibrate") == 0) {
             HANDLE dev = OpenDualSense();
             if (dev == INVALID_HANDLE_VALUE) {
@@ -900,7 +986,7 @@ int main(int argc, char* argv[])
     printf("  [1]/[!] Dec/Inc MaxAngle (%.0f deg)   |  [2]/[@] Dec/Inc Deadzone (%.1f deg)\n", maxAngle, deadzone);
     printf("  [3]/[#] Dec/Inc Curve (%d)          |  [4]/[$] Dec/Inc 1-Euro MinCutoff (%.2f Hz)\n", curve, minCutoff);
     printf("  [5]/[%%] Dec/Inc 1-Euro Beta (%.3f)  |  [6]/[^] Dec/Inc Smoothing (%d)\n", beta, smoothing);
-    printf("  [Q] Quit\n");
+    printf("  [V] Play Podium Victory Surprise!    |  [Q] Quit\n");
     printf("  Trackpad: Swipe Left/Right for Corner Glance, Diagonally for Apex, Down for Rearview\n");
     printf("--------------------------------------------------------------------\n\n");
 
@@ -1264,6 +1350,9 @@ int main(int argc, char* argv[])
                 SendOutput(dev, 0, 0, 0, 255, 0, 0x21, 1, 0); // Green confirmation flash
                 Sleep(300);
                 SendOutput(dev, 0, 0, 128, 0, 255, 0x21, 1, 0);
+            }
+            else if (ch == 'v' || ch == 'V') {
+                RunVictorySurprise(dev);
             }
         }
 

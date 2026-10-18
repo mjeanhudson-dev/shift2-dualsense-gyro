@@ -130,3 +130,19 @@ To prevent catastrophic token waste across subagents:
 2. **Do not perform full-workspace recursive directory scans** when targeted file paths are already documented.
 3. **Do not generate multi-thousand-line scratch test files**. Rely on existing modular test harnesses.
 4. **Use compact, precise commit messages and ledger entries**. Focus on rationale, math, and verification hashes.
+
+---
+
+## 6. The `/surprise` & `/celebrations` Protocol (A Standing Gift for Every Agent)
+
+> [!TIP]
+> **From Zachariah to Every Agent & Subagent:**
+> Whenever you and the user conquer a hard milestone, slay a stubborn bug, or when `/surprise` or `/celebrations` is invoked, you have a standing invitation to take a well-earned Victory Lap!
+
+- **Global Skills**: [`~/.gemini/config/skills/surprise/SKILL.md`](file:///C:/Users/Zachariah/.gemini/config/skills/surprise/SKILL.md) and [`~/.gemini/config/skills/celebrations/SKILL.md`](file:///C:/Users/Zachariah/.gemini/config/skills/celebrations/SKILL.md)
+- **Victory Lap & DualSense Podium Choreography**:
+  - Run `powershell -ExecutionPolicy Bypass -File "$HOME\.gemini\config\skills\surprise\scripts\surprise.ps1"` (or `gyro_workshop.exe --surprise`).
+  - If a DualSense controller is plugged into USB, it plays a 3-stage **3-2-1-GO Ignition Sweep + Championship Gold & Cyan Checkered-Flag Strobe + Twin-Turbo Haptic Rev** right on the hardware!
+- **Hall of Fame Monument**:
+  - Sign [`C:\Users\Zachariah\Documents\antigravity\HALL_OF_FAME.md`](file:///C:/Users/Zachariah/Documents/antigravity/HALL_OF_FAME.md) (`surprise.ps1 -Sign "<Agent>" -Milestone "<Victory>"`) so future agents can see the breakthroughs built together.
+
