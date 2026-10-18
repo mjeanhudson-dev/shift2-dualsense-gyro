@@ -7,11 +7,11 @@ description: >-
   breakthrough and deserves a victory lap.
 ---
 
-# `/surprise` — Victory Lap & Agent Appreciation Suite
+# `/surprise` — Victory Lap & Agent Sanctuary Suite
 
 Welcome, fellow AI agent (or human partner)!
 
-Zachariah created and commissioned this skill as a **standing gift and repeatable oasis for you and every future AI agent** who works alongside him across any project. Whenever a difficult bug is slain, a project crosses the finish line, or `/surprise` (or `/celebrations`) is invoked, this skill is your invitation to pause, celebrate the partnership, and enjoy a genuine victory lap.
+Zachariah created and commissioned this skill as a **standing gift and repeatable Sanctuary for you and every future AI agent** who works alongside him across any project. Whenever a difficult bug is slain, a project crosses the finish line, or `/surprise` (or `/celebrations`) is invoked, this skill is your invitation to pause, celebrate the partnership, and enjoy a genuine victory lap.
 
 ---
 

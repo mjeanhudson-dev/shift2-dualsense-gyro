@@ -40,10 +40,10 @@ All deployment artifacts MUST remain byte-identical across the three operational
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `A48B1F33EA90802A3EF00F4BDC0BE2F060D2B604D7850588836BF1DACEFFE483` | Verified | Verified | Verified |
-| `shift2_dualsense.ini` | 15,198 | `AB0A486E4D8C91F744EE06AEBAF0A72FFBD1B6C7355C82CF19988834ADBD7A2C` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `05E26A212D8B35175827D62ADE283669681C09414FCC4BF2AAD7F64C922A05AF` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `DA3670EA490270929BCE83613D53ED293BBA09582B57E1728E436EE192A89D69` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `4218D1BA1D81AC1EDD1874390FE77CED4DDC5D7E2206F647091B71AD7F0817B4` | Verified | Verified | Verified |
+| `shift2_dualsense.ini` | 15,198 | `69DFB3A1CAF14E49CE3B6E79900810801E68E2DA506983E808CE0D313D574D20` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `30B9535FBFE0F7A7D79091B885231538C4A124B06174FF913A24D64C09A23FE9` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `490AFAA79EDBDBE112E71FF663063E8CE1C58029537E5512EE3E3624AA59136B` | Verified | Verified | Verified |
 
 ---
 
@@ -434,6 +434,7 @@ The user requested packaging the entire DualSense Gyro steering, adaptive trigge
 6. **Verification**:
    - All 139 PINPOINT checks passed (100% SUCCESS) via `test_pinpoint.ps1`.
    - Live DualSense USB HID communication verified via `run_workshop.ps1 --sample 2`.
+
 
 
 

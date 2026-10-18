@@ -114,8 +114,8 @@ static Config DefaultConfig()
 {
     Config c = {};
     c.motionStart = 1;  c.motionMode = 0;  c.motionInvert = 0;
-    c.motionMax = 35;   c.motionDead = 1;  c.motionExpo = 115;  c.motionSmooth = 75;
-    c.oneEuroMinCutoff = 120; c.oneEuroBeta = 40;
+    c.motionMax = 28;   c.motionDead = 1;  c.motionExpo = 95;   c.motionSmooth = 55;
+    c.oneEuroMinCutoff = 120; c.oneEuroBeta = 55;
     c.gyroBiasX = 0.0f; c.gyroBiasY = 0.0f; c.gyroBiasZ = 0.0f;
     c.trig = 1;
     c.brakeZone = 2;    c.brakeStrength = 3;     c.brakeEnd = 7;
@@ -950,7 +950,7 @@ static int Steer(float inputAngle = -999.0f)
     float angleToUse = (inputAngle > -900.0f) ? inputAngle : M.angle;
     float rel = Wrap(angleToUse - M.center);
     float a = fabsf(rel);
-    float dz = (float)cfg.motionDead;
+    float dz = (cfg.motionDead <= 1) ? ((float)cfg.motionDead * 0.65f) : (float)cfg.motionDead;
     float mx = (float)cfg.motionMax;
     if (mx < dz + 1.0f) mx = dz + 1.0f;
     if (a <= dz) return 0;
@@ -963,7 +963,7 @@ static int Steer(float inputAngle = -999.0f)
         }
         if (cfg.gameDead > 0) {
             float g = cfg.gameDead / 100.0f;
-            float blend = (n < 0.25f) ? (n / 0.25f) : 1.0f;
+            float blend = (n < 0.10f) ? (n / 0.10f) : 1.0f;
             n = (g * blend) + (1.0f - g * blend) * n;
         }
     }
@@ -991,7 +991,7 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
         bool vibrating = (g_steerVibeL > 0 || g_steerVibeR > 0 || g_kickOn || g_rumbleL > 0 || g_rumbleR > 0);
         bool inRace = !cfg.inRaceOnly || (ATOMIC_LOAD(g_raceActive) != 0);
         float relPred = fabsf(Wrap(predicted - M.center));
-        float dz = fmaxf((float)cfg.motionDead, 1.0f);
+        float dz = fmaxf((float)cfg.motionDead * 0.65f, 0.55f);
         bool gyroRecentlySteered = (M.lastGyroTurnMs != 0) &&
                                    ((int32_t)(M.motionLast - M.lastGyroTurnMs) >= 0) &&
                                    ((M.motionLast - M.lastGyroTurnMs) < 3500);
@@ -1004,7 +1004,7 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
         float tau;
         if (!gravityReinforcing && ((inRace && relPred > dz) || (gyroRecentlySteered && relPred > dz))) {
             tau = 25.0f;
-        } else if (!gravityReinforcing && fabsf(gyroRollDps) > 2.0f) {
+        } else if (!gravityReinforcing && fabsf(gyroRollDps) > 1.2f) {
             tau = 12.0f;
         } else {
             tau = vibrating ? 0.85f : 0.22f;
@@ -1481,7 +1481,7 @@ static void Parse(const uint8_t* b, DWORD n)
     }
     if (cfg.motionInvert) gyroRollDps = -gyroRollDps;
     M.gyroRollRate = gyroRollDps;
-    if (fabsf(gyroRollDps) > 3.0f) {
+    if (fabsf(gyroRollDps) > 1.2f) {
         M.lastGyroTurnMs = now;
     }
     bool accelTrusted = rollOk && accelMagnitude > 0.70f * 8192.0f &&

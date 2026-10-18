@@ -1103,7 +1103,7 @@ int main(int argc, char* argv[])
             gyroRollDps = rollDps;
         }
 
-        if (fabsf(gyroRollDps) > 3.0f) {
+        if (fabsf(gyroRollDps) > 1.2f) {
             lastGyroTurnMs = now;
         }
 
@@ -1122,7 +1122,7 @@ int main(int argc, char* argv[])
         bool reclined = (fabsf(pitch) > 30.0f);
         if (accelTrusted && !reclined) {
             float relPred = fabsf(Wrap(predicted - steerCenter));
-            float dz = fmaxf(deadzone, 1.0f);
+            float dz = fmaxf(deadzone * 0.65f, 0.55f);
             bool gyroRecentlySteered = (lastGyroTurnMs != 0) &&
                                        ((int32_t)(now - lastGyroTurnMs) >= 0) &&
                                        ((now - lastGyroTurnMs) < 3500);
@@ -1130,7 +1130,7 @@ int main(int argc, char* argv[])
             float tau;
             if (!gravityReinforcing && (relPred > dz || (gyroRecentlySteered && relPred > dz))) {
                 tau = 25.0f;
-            } else if (!gravityReinforcing && fabsf(gyroRollDps) > 2.0f) {
+            } else if (!gravityReinforcing && fabsf(gyroRollDps) > 1.2f) {
                 tau = 12.0f;
             } else {
                 tau = 0.22f;
@@ -1148,7 +1148,8 @@ int main(int argc, char* argv[])
         // Steering output calculation (Steer)
         float relAngle = Wrap(cleanAngle - steerCenter);
         float absAngle = fabsf(relAngle);
-        float normSteer = (absAngle <= deadzone) ? 0.0f : (absAngle - deadzone) / (maxAngle - deadzone);
+        float effDead = (deadzone <= 1.0f) ? (deadzone * 0.65f) : deadzone;
+        float normSteer = (absAngle <= effDead) ? 0.0f : (absAngle - effDead) / (maxAngle - effDead);
         if (normSteer > 1.0f) normSteer = 1.0f;
         if (curve != 100 && normSteer > 0.0f) {
             float p = (float)curve / 100.0f;
@@ -1161,7 +1162,7 @@ int main(int argc, char* argv[])
             }
             if (handlingGameDead > 0 && normSteer > 0.0f) {
                 float g = (float)handlingGameDead / 100.0f;
-                float blend = (normSteer < 0.25f) ? (normSteer / 0.25f) : 1.0f;
+                float blend = (normSteer < 0.10f) ? (normSteer / 0.10f) : 1.0f;
                 normSteer = (g * blend) + (1.0f - g * blend) * normSteer;
             }
         }
