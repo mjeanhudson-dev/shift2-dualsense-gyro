@@ -220,10 +220,30 @@ static int SmoothSteerWorkshop(int target, float dt, int smoothing, float* steer
     return (int)lroundf(*steerOutput);
 }
 
+// Simulates Shift 2's internal gamepad physics model from vehicleset_pc_xinput_default.xml:
+// - TurnDeadzone = 0.037500 (3.75% deadzone swallow)
+// - TurnSensitivity = 0.250000 (quadratic squaring: input^2.0)
+static float SimulateShift2GameRack(int lx)
+{
+    float rawNorm = fabsf((float)lx) / 32767.0f;
+    if (rawNorm > 1.0f) rawNorm = 1.0f;
+
+    // 1. Shift 2 TurnDeadzone = 3.75%
+    float dead = 0.0375f;
+    if (rawNorm <= dead) return 0.0f;
+    float active = (rawNorm - dead) / (1.0f - dead);
+
+    // 2. Shift 2 TurnSensitivity = 0.250000 (quadratic squaring)
+    float inGameWheel = active * active;
+    return (lx < 0) ? -inGameWheel : inGameWheel;
+}
+
 static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smoothing, float* minCutoff, float* beta,
                           int* flickEnabled, float* flickThresh, int* flickMs, int* flickLock,
                           int* glanceEnabled, int* glanceStrength, int* glanceDead,
-                          float* biasX, float* biasY, float* biasZ)
+                          float* biasX, float* biasY, float* biasZ,
+                          int* handlingEnabled = NULL, int* handlingGameDead = NULL, int* handlingCurve = NULL,
+                          int* handlingLead = NULL, int* handlingLeadMs = NULL, int* motionMode = NULL)
 {
     char iniPath[MAX_PATH];
     GetIniPath(iniPath, sizeof(iniPath));
@@ -231,7 +251,7 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smo
     *maxAngle = 75.0f;
     *deadzone = 1.0f;
     *curve = 100;
-    *smoothing = 50;
+    *smoothing = 100;
     *minCutoff = 1.20f;
     *beta = 0.040f;
     *flickEnabled = 1;
@@ -244,8 +264,18 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smo
     *biasX = 0.0f;
     *biasY = 0.0f;
     *biasZ = 0.0f;
+    if (handlingEnabled) *handlingEnabled = 1;
+    if (handlingGameDead) *handlingGameDead = 4;
+    if (handlingCurve) *handlingCurve = 50;
+    if (handlingLead) *handlingLead = 40;
+    if (handlingLeadMs) *handlingLeadMs = 35;
+    if (motionMode) *motionMode = 0;
 
     if (GetFileAttributesA(iniPath) != INVALID_FILE_ATTRIBUTES) {
+        if (motionMode) {
+            int m = GetPrivateProfileIntA("Motion", "Mode", 0, iniPath);
+            *motionMode = (m < 0 || m > 2) ? 0 : m;
+        }
         *maxAngle = (float)GetPrivateProfileIntA("Motion", "MaxAngle", 75, iniPath);
         char dzBuf[64];
         if (GetPrivateProfileStringA("Motion", "Deadzone", "", dzBuf, sizeof(dzBuf), iniPath) > 0)
@@ -253,11 +283,17 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smo
         else
             *deadzone = 1.0f;
         *curve = GetPrivateProfileIntA("Motion", "Curve", 100, iniPath);
-        *smoothing = GetPrivateProfileIntA("Motion", "Smoothing", 50, iniPath);
+        *smoothing = GetPrivateProfileIntA("Motion", "Smoothing", 100, iniPath);
         int mcInt = GetPrivateProfileIntA("Motion", "OneEuroMinCutoff", 120, iniPath);
         int bInt = GetPrivateProfileIntA("Motion", "OneEuroBeta", 40, iniPath);
         *minCutoff = (float)mcInt / 100.0f;
         *beta = (float)bInt / 1000.0f;
+
+        if (handlingEnabled) *handlingEnabled = GetPrivateProfileIntA("Handling", "Enabled", 1, iniPath);
+        if (handlingGameDead) *handlingGameDead = GetPrivateProfileIntA("Handling", "GameDeadzone", 4, iniPath);
+        if (handlingCurve) *handlingCurve = GetPrivateProfileIntA("Handling", "Curve", 50, iniPath);
+        if (handlingLead) *handlingLead = GetPrivateProfileIntA("Handling", "Lead", 40, iniPath);
+        if (handlingLeadMs) *handlingLeadMs = GetPrivateProfileIntA("Handling", "LeadMs", 35, iniPath);
 
         char buf[64];
         if (GetPrivateProfileStringA("Motion", "GyroBiasX", "", buf, sizeof(buf), iniPath) > 0) *biasX = (float)atof(buf);
@@ -274,10 +310,19 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smo
         *flickMs = (*flickMs < 30) ? 30 : ((*flickMs > 500) ? 500 : *flickMs);
         *flickLock = (*flickLock < 50) ? 50 : ((*flickLock > 3000) ? 3000 : *flickLock);
         *flickThresh = (*flickThresh < 100.0f) ? 100.0f : ((*flickThresh > 3000.0f) ? 3000.0f : *flickThresh);
+        const char* modeDesc = "0 (1st-Party Unified Turn & Lean Auto-Blend)";
+        if (motionMode && *motionMode == 1) modeDesc = "1 (Turntable / Flat Yaw Steering)";
+        else if (motionMode && *motionMode == 2) modeDesc = "2 (Sagittal Wheel Roll Steering)";
         printf("[i] Loaded configuration from shift2_dualsense.ini:\n");
-        printf("    Motion:   MaxAngle=%.0f deg, Deadzone=%.1f deg, Curve=%d, Smoothing=%d\n", *maxAngle, *deadzone, *curve, *smoothing);
+        printf("    Motion:   Mode=%s, MaxAngle=%.0f deg, Deadzone=%.1f deg, Curve=%d, Smoothing=%d\n", modeDesc, *maxAngle, *deadzone, *curve, *smoothing);
         printf("    1-Euro:   MinCutoff=%.2f Hz, Beta=%.3f\n", *minCutoff, *beta);
         printf("    Bias:     X=%.2f, Y=%.2f, Z=%.2f deg/s\n", *biasX, *biasY, *biasZ);
+        printf("    Handling: %s (GameDead=%d%%, InverseCurve=%d, Lead=%d/%dms)\n",
+               (handlingEnabled && *handlingEnabled) ? "1:1 PRE-COMPENSATED (Shift 2 Gamepad Model Bypassed)" : "DISABLED (Raw Passthrough)",
+               handlingGameDead ? *handlingGameDead : 0,
+               handlingCurve ? *handlingCurve : 100,
+               handlingLead ? *handlingLead : 0,
+               handlingLeadMs ? *handlingLeadMs : 0);
         printf("    Flick:    %s (Threshold=%.0f deg/s, Pulse=%d ms, Lockout=%d ms)\n",
                *flickEnabled ? "ENABLED" : "DISABLED", *flickThresh, *flickMs, *flickLock);
         printf("    Trackpad: Glance %s (Strength=%d%%, Deadzone=%d px)\n\n",
@@ -288,12 +333,14 @@ static void LoadIniConfig(float* maxAngle, float* deadzone, int* curve, int* smo
 }
 
 static void SaveIniConfig(float maxAngle, float deadzone, int curve, int smoothing, float minCutoff, float beta,
-                          float biasX, float biasY, float biasZ)
+                          float biasX, float biasY, float biasZ, int motionMode = 0)
 {
     char iniPath[MAX_PATH];
     GetIniPath(iniPath, sizeof(iniPath));
     char val[64];
 
+    snprintf(val, sizeof(val), "%d", motionMode);
+    WritePrivateProfileStringA("Motion", "Mode", val, iniPath);
     snprintf(val, sizeof(val), "%d", (int)roundf(maxAngle));
     WritePrivateProfileStringA("Motion", "MaxAngle", val, iniPath);
     if (fabsf(deadzone - roundf(deadzone)) < 0.05f)
@@ -674,10 +721,10 @@ static int RunJitterTest(HANDLE dev)
         float rateZ = ((float)gz / kGyroScale) - bz;
         float rateY = ((float)gy / kGyroScale) - by;
         float invGyz = 1.0f / gyz;
-        float ny = filtAy * invGyz;
-        float nz = filtAz * invGyz;
+        float ny = fabsf(filtAy) * invGyz;
+        float nz = fabsf(filtAz) * invGyz;
         float rollDps = -(rateZ * ny + rateY * nz);
-        float turnDps = -rateZ;
+        float turnDps = -(rateY * ny + rateZ * nz);
         float wRollSq = rollDps * rollDps;
         float wTurnSq = turnDps * turnDps;
         float wSumSq = wRollSq + wTurnSq;
@@ -782,7 +829,7 @@ int main(int argc, char* argv[])
     float maxAngle = 75.0f;
     float deadzone = 1.0f;
     int curve = 100;
-    int smoothing = 50;
+    int smoothing = 100;
     float minCutoff = 1.20f;
     float beta = 0.040f;
     float biasX = 0.0f, biasY = 0.0f, biasZ = 0.0f;
@@ -793,11 +840,18 @@ int main(int argc, char* argv[])
     int glanceEnabled = 1;
     int glanceStrength = 100;
     int glanceDead = 12;
+    int handlingEnabled = 1;
+    int handlingGameDead = 4;
+    int handlingCurve = 50;
+    int handlingLead = 40;
+    int handlingLeadMs = 35;
+    int motionMode = 0;
 
     LoadIniConfig(&maxAngle, &deadzone, &curve, &smoothing, &minCutoff, &beta,
                   &flickEnabled, &flickThresh, &flickMs, &flickLock,
                   &glanceEnabled, &glanceStrength, &glanceDead,
-                  &biasX, &biasY, &biasZ);
+                  &biasX, &biasY, &biasZ,
+                  &handlingEnabled, &handlingGameDead, &handlingCurve, &handlingLead, &handlingLeadMs, &motionMode);
 
     HANDLE dev = OpenDualSense();
     if (dev == INVALID_HANDLE_VALUE) {
@@ -822,11 +876,14 @@ int main(int argc, char* argv[])
     float workshopSteerOutput = 0.0f;
     int biasCount = 0;
     DWORD lastMs = GetTickCount();
+    DWORD lastRenderMs = 0;
+    DWORD lastGyroTurnMs = 0;
     DWORD flickUntil = 0;
     DWORD flickLockUntil = 0;
     DWORD tapUntil = 0;
     float peakDps = 0.0f;
     bool prevPadCenter = false;
+    bool firstMotionSample = true;
 
     // Trackpad glance state
     bool touchActive = false;
@@ -837,8 +894,9 @@ int main(int argc, char* argv[])
     DWORD touchGlanceHoldUntil = 0;
 
     printf("Controls:\n");
-    printf("  [C] or PS/Mute: Center Steering  |  [F] Test Flick Pulse (150/150)\n");
-    printf("  [T] Test R2 Vibration (Mode 0x26, 40Hz)  |  [S] Save Settings to INI\n");
+    printf("  [C] or PS/Mute: Center Steering  |  [M] Cycle Gyro Mode (0:Unified / 1:Yaw / 2:Roll)\n");
+    printf("  [F] Test Flick Pulse (150/150)   |  [T] Test R2 Vibration (Mode 0x26, 40Hz)\n");
+    printf("  [H] Toggle Shift 2 Pre-Compensation  |  [S] Save Settings to INI\n");
     printf("  [1]/[!] Dec/Inc MaxAngle (%.0f deg)   |  [2]/[@] Dec/Inc Deadzone (%.1f deg)\n", maxAngle, deadzone);
     printf("  [3]/[#] Dec/Inc Curve (%d)          |  [4]/[$] Dec/Inc 1-Euro MinCutoff (%.2f Hz)\n", curve, minCutoff);
     printf("  [5]/[%%] Dec/Inc 1-Euro Beta (%.3f)  |  [6]/[^] Dec/Inc Smoothing (%d)\n", beta, smoothing);
@@ -852,8 +910,8 @@ int main(int argc, char* argv[])
     CONSOLE_CURSOR_INFO origCursorInfo;
     bool cursorHidden = false;
     if (!sampleOnly && GetConsoleScreenBufferInfo(hStdOut, &csbi)) {
-        if (csbi.dwCursorPosition.Y > csbi.dwSize.Y - 6) {
-            printf("\n\n\n\n");
+        if (csbi.dwCursorPosition.Y > csbi.dwSize.Y - 8) {
+            printf("\n\n\n\n\n\n");
             GetConsoleScreenBufferInfo(hStdOut, &csbi);
         }
         startCoord.X = 0;
@@ -872,13 +930,13 @@ int main(int argc, char* argv[])
     while (running) {
         DWORD read = 0;
         if (!ReadReport(dev, &inOv, inBuf, &read)) {
-            Sleep(4);
+            Sleep(1);
             continue;
         }
 
         DWORD now = GetTickCount();
         float dt = (float)(now - lastMs) / 1000.0f;
-        if (dt <= 0.0f || dt > 0.1f) dt = 0.004f;
+        if (dt <= 0.0f || dt > 0.05f) dt = 0.004f;
         lastMs = now;
 
         const uint8_t* d = inBuf + 1; // standard USB report offset
@@ -894,12 +952,10 @@ int main(int argc, char* argv[])
         float rawGy = (float)gy / kGyroScale;
         float rawGz = (float)gz / kGyroScale;
 
-        static bool haveSample = false;
-        if (!haveSample) {
+        if (firstMotionSample) {
             filtAx = rawAx;
             filtAy = rawAy;
             filtAz = rawAz;
-            haveSample = true;
         } else {
             // Low-pass filter gravity
             filtAx += (rawAx - filtAx) * 0.22f;
@@ -907,21 +963,25 @@ int main(int argc, char* argv[])
             filtAz += (rawAz - filtAz) * 0.22f;
         }
 
+        float up = (motionMode != 1) ? filtAy : filtAz;
+        float other = (motionMode != 1) ? filtAz : filtAy;
         float gyz = sqrtf(filtAy * filtAy + filtAz * filtAz);
         if (gyz < 100.0f) gyz = 100.0f;
-        float pitch = atan2f(filtAz, sqrtf(filtAx * filtAx + filtAy * filtAy)) * 57.29578f;
-        float roll = atan2f(-filtAx, (filtAy >= -2000.0f ? gyz : -gyz)) * 57.29578f;
+        float pitch = atan2f(other, sqrtf(filtAx * filtAx + up * up)) * 57.29578f;
+        float roll = atan2f(-filtAx, (up >= -2000.0f ? gyz : -gyz)) * 57.29578f;
 
-        if (sampleIdx == 0) {
+        if (firstMotionSample) {
             gyroAngle = roll;
-            steerCenter = roll;
+            steerCenter = 0.0f; // Boot Horizon Zero (INV-03)
             steerFilter.Reset(gyroAngle);
             cleanAngle = gyroAngle;
+            firstMotionSample = false;
         }
 
         // Auto-accumulate bias if stationary and not yet calibrated
         float gyroMag = fmaxf(fabsf(rawGx), fmaxf(fabsf(rawGy), fabsf(rawGz)));
-        float accMag = sqrtf(filtAx * filtAx + filtAy * filtAy + filtAz * filtAz);
+        float accMag = sqrtf(filtAx * filtAx + filtAy * filtAz + filtAz * filtAz);
+        accMag = sqrtf(filtAx * filtAx + filtAy * filtAy + filtAz * filtAz);
         if (biasCount < 128 && gyroMag < 4.0f && accMag > 6000.0f && accMag < 10000.0f &&
             biasX == 0.0f && biasY == 0.0f && biasZ == 0.0f) {
             biasCount++;
@@ -930,37 +990,69 @@ int main(int argc, char* argv[])
             biasZ += (rawGz - biasZ) / (float)biasCount;
         }
 
-        // Exact 1st-Party Unified Player Turn & Lean Fusion Engine (C2 Smootherstep):
+        // Consolidated 3-Mode Gyro Fusion Engine (matches xinput_proxy.cpp 1:1):
         float rateZ = rawGz - biasZ;
         float rateY = rawGy - biasY;
         float invGyz = 1.0f / gyz;
-        float ny = filtAy * invGyz;
-        float nz = filtAz * invGyz;
+        // Non-negative sagittal gravity weights prevent sign flip / axis cancellation when pitched forward (filtAz < 0)
+        float ny = fabsf(filtAy) * invGyz;
+        float nz = fabsf(filtAz) * invGyz;
         float rollDps = -(rateZ * ny + rateY * nz);
-        float turnDps = -rateZ;
-        float wRollSq = rollDps * rollDps;
-        float wTurnSq = turnDps * turnDps;
-        float wSumSq = wRollSq + wTurnSq;
+        float turnDps = -(rateY * ny + rateZ * nz);
         float gyroRollDps = 0.0f;
-        if (wSumSq < 1e-4f) {
-            gyroRollDps = 0.5f * (rollDps + turnDps);
+        if (motionMode == 0) {
+            float wRollSq = rollDps * rollDps;
+            float wTurnSq = turnDps * turnDps;
+            float wSumSq = wRollSq + wTurnSq;
+            if (wSumSq < 1e-4f) {
+                gyroRollDps = 0.5f * (rollDps + turnDps);
+            } else {
+                float u = wRollSq / wSumSq;
+                float s = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f);
+                gyroRollDps = s * rollDps + (1.0f - s) * turnDps;
+            }
+        } else if (motionMode == 1) {
+            gyroRollDps = turnDps;
         } else {
-            float u = wRollSq / wSumSq;
-            float s = u * u * u * (u * (u * 6.0f - 15.0f) + 10.0f);
-            gyroRollDps = s * rollDps + (1.0f - s) * turnDps;
+            gyroRollDps = rollDps;
         }
 
-        // High-rate gyro integration
-        gyroAngle = Wrap(gyroAngle + gyroRollDps * dt);
+        if (fabsf(gyroRollDps) > 3.0f) {
+            lastGyroTurnMs = now;
+        }
 
-        // Low-rate gravity tilt anchor
+        // High-rate gyro integration + Virtual Steering Rack Stop Clamp
+        float predicted = Wrap(gyroAngle + gyroRollDps * dt);
+        float maxRackAngle = fminf(fmaxf(maxAngle + 5.0f, 35.0f), 90.0f);
+        float relFromCenter = Wrap(predicted - steerCenter);
+        if (relFromCenter > maxRackAngle) {
+            predicted = Wrap(steerCenter + maxRackAngle);
+        } else if (relFromCenter < -maxRackAngle) {
+            predicted = Wrap(steerCenter - maxRackAngle);
+        }
+
+        // Asymmetric Gravity Anchor (matches xinput_proxy.cpp MotionStep 1:1)
         bool accelTrusted = accMag > 5700.0f && accMag < 11000.0f && fabsf(gyroRollDps) < 180.0f;
         bool reclined = (fabsf(pitch) > 30.0f);
         if (accelTrusted && !reclined) {
-            float tau = (fabsf(gyroRollDps) > 2.0f) ? 8.0f : 0.22f;
+            float relPred = fabsf(Wrap(predicted - steerCenter));
+            float dz = fmaxf(deadzone, 1.0f);
+            bool gyroRecentlySteered = (lastGyroTurnMs != 0) &&
+                                       ((int32_t)(now - lastGyroTurnMs) >= 0) &&
+                                       ((now - lastGyroTurnMs) < 3500);
+            bool gravityReinforcing = (roll * predicted >= 0.0f) && (fabsf(roll) >= fabsf(predicted));
+            float tau;
+            if (!gravityReinforcing && (relPred > dz || (gyroRecentlySteered && relPred > dz))) {
+                tau = 25.0f;
+            } else if (!gravityReinforcing && fabsf(gyroRollDps) > 2.0f) {
+                tau = 12.0f;
+            } else {
+                tau = 0.22f;
+            }
             float correction = dt / (tau + dt);
-            gyroAngle = Wrap(gyroAngle + Wrap(roll - gyroAngle) * correction);
+            predicted = Wrap(predicted + Wrap(roll - predicted) * correction);
         }
+        gyroAngle = predicted;
 
         // Adaptive Rate-Driven 1-Euro Filter (zero derivative lag)
         steerFilter.minCutoff = minCutoff;
@@ -976,9 +1068,24 @@ int main(int argc, char* argv[])
             float p = (float)curve / 100.0f;
             normSteer = powf(normSteer, p);
         }
-        if (relAngle < 0.0f) normSteer = -normSteer;
+        float physicalRatio = normSteer;
+        if (handlingEnabled) {
+            if (handlingCurve > 0 && handlingCurve != 100 && normSteer > 0.0f) {
+                normSteer = powf(normSteer, (float)handlingCurve / 100.0f);
+            }
+            if (handlingGameDead > 0 && normSteer > 0.0f) {
+                float g = (float)handlingGameDead / 100.0f;
+                float blend = (normSteer < 0.25f) ? (normSteer / 0.25f) : 1.0f;
+                normSteer = (g * blend) + (1.0f - g * blend) * normSteer;
+            }
+        }
+        if (relAngle < 0.0f) {
+            normSteer = -normSteer;
+            physicalRatio = -physicalRatio;
+        }
         int rawLx = (int)roundf(normSteer * 32767.0f);
         int lx = SmoothSteerWorkshop(rawLx, dt, smoothing, &workshopSteerOutput);
+        float inGameWheel = SimulateShift2GameRack(lx);
 
         // IMU Flick detection
         float currentPeak = fmaxf(fabsf(rawGx), fmaxf(fabsf(rawGy), fabsf(rawGz)));
@@ -993,12 +1100,16 @@ int main(int argc, char* argv[])
             SendOutput(dev, 150, 150, 230, 0, 255, 0x21, 1, 0); // magenta pulse
         }
 
-        // Controller buttons (PS or Mute button centers steering)
+        // Controller buttons (PS or Mute button centers steering safely)
         bool psBtn = (d[9] & 0x01) != 0;
         bool muteBtn = (d[9] & 0x04) != 0;
         if ((psBtn || muteBtn) && !prevPadCenter) {
-            steerCenter = cleanAngle;
+            gyroAngle = 0.0f;
+            cleanAngle = 0.0f;
+            steerCenter = 0.0f;
+            steerFilter.Reset(0.0f);
             workshopSteerOutput = 0.0f;
+            lastGyroTurnMs = 0;
             SendOutput(dev, 120, 120, 0, 230, 255, 0x21, 1, 0); // cyan haptic tap
             tapUntil = now + 60;
         }
@@ -1111,10 +1222,17 @@ int main(int argc, char* argv[])
             int ch = _getch();
             if (ch == 'q' || ch == 'Q') running = false;
             else if (ch == 'c' || ch == 'C') {
-                steerCenter = cleanAngle;
+                gyroAngle = 0.0f;
+                cleanAngle = 0.0f;
+                steerCenter = 0.0f;
+                steerFilter.Reset(0.0f);
                 workshopSteerOutput = 0.0f;
+                lastGyroTurnMs = 0;
                 SendOutput(dev, 120, 120, 0, 230, 255, 0x21, 1, 0);
                 tapUntil = now + 60;
+            }
+            else if (ch == 'm' || ch == 'M') {
+                motionMode = (motionMode + 1) % 3;
             }
             else if (ch == 'f' || ch == 'F') {
                 SendOutput(dev, 150, 150, 230, 0, 255, 0x21, 1, 0);
@@ -1125,6 +1243,9 @@ int main(int argc, char* argv[])
                 SendOutput(dev, 0, 0, 128, 0, 255, 0x26, 5, 40);
                 Sleep(350);
                 SendOutput(dev, 0, 0, 128, 0, 255, 0x21, 1, 0);
+            }
+            else if (ch == 'h' || ch == 'H') {
+                handlingEnabled = !handlingEnabled;
             }
             else if (ch == '1') { if (maxAngle > 10.0f) maxAngle -= 1.0f; }
             else if (ch == '!') { if (maxAngle < 90.0f) maxAngle += 1.0f; }
@@ -1139,7 +1260,7 @@ int main(int argc, char* argv[])
             else if (ch == '6') { if (smoothing > 0) smoothing -= 5; }
             else if (ch == '^') { if (smoothing < 100) smoothing += 5; }
             else if (ch == 's' || ch == 'S') {
-                SaveIniConfig(maxAngle, deadzone, curve, smoothing, minCutoff, beta, biasX, biasY, biasZ);
+                SaveIniConfig(maxAngle, deadzone, curve, smoothing, minCutoff, beta, biasX, biasY, biasZ, motionMode);
                 SendOutput(dev, 0, 0, 0, 255, 0, 0x21, 1, 0); // Green confirmation flash
                 Sleep(300);
                 SendOutput(dev, 0, 0, 128, 0, 255, 0x21, 1, 0);
@@ -1156,39 +1277,50 @@ int main(int argc, char* argv[])
             SendOutput(dev, 0, 0, 128, 0, 255, 0x21, 1, 0);
         }
 
+        // Throttle console rendering so we drain 250 Hz HID reports in real time without buffer lag
+        DWORD renderIntervalMs = sampleOnly ? 40 : 25;
+        if (lastRenderMs != 0 && (now - lastRenderMs) < renderIntervalMs) {
+            continue;
+        }
+        lastRenderMs = now;
+
         char bar[33];
         MakeBar(bar, normSteer, 32);
+        char gameBar[33];
+        MakeBar(gameBar, inGameWheel, 32);
         bool isFlicking = flickTriggered || (flickUntil > 0 && (int32_t)(flickUntil - now) > 0);
         float currentCutoff = steerFilter.GetCurrentCutoff(gyroRollDps);
 
         bool glanceRx = (touchGlanceDirX != 0);
         bool glanceLookBehindY = (touchGlanceDirY == -1);
+        const char* modeShort = (motionMode == 0) ? "0:Unified" : ((motionMode == 1) ? "1:YawTurn" : "2:WheelRoll");
 
         if (sampleOnly) {
             sampleIdx++;
-            printf("[%3d] Steer:%+6d (%+4.0f%%) Roll:%+5.1f (1-Euro:%+5.1f) | Rate:%+5.1f deg/s Cutoff:%4.1fHz | Pad:(%4d,%4d) [%-8s]%s%s\n",
-                   sampleIdx, lx, normSteer * 100.0f, gyroAngle, cleanAngle, gyroRollDps, currentCutoff, tx, ty, flickDirStr,
+            printf("[%3d] Steer:%+5.1f deg (Fused:%+5.1f) -> lx:%+6d (%+4.0f%%) -> Shift2-Tyres:%+4.0f%% | Rate:%+5.1f deg/s Mode:%s Cutoff:%4.1fHz%s%s\n",
+                   sampleIdx, relAngle, cleanAngle, lx, normSteer * 100.0f, inGameWheel * 100.0f, gyroRollDps, modeShort, currentCutoff,
                    (glanceRx ? " [GLANCE RX]" : ""),
                    (glanceLookBehindY ? " [LOOK BEHIND (Y)]" : ""));
             if (sampleIdx >= sampleCount) break;
-            Sleep(50);
         } else {
             // Live console dashboard update
             SetConsoleCursorPosition(hStdOut, startCoord);
-            printf("[STEER: %s] lx:%+6d (%+4.0f%%) | Lock:%.0f deg Dead:%.1f deg Curve:%d Smooth:%d%s    \n",
-                   bar, lx, ((float)lx / 327.67f), maxAngle, deadzone, curve, smoothing,
-                   (smoothing == 50 ? " (Default Rack)" : (smoothing == 0 || smoothing == 100 ? " (Direct 1:1)" : "")));
-            printf("Telemetry: Angle (1-Euro Fused):%+5.1f deg | Raw Accel Roll:%+5.1f deg | Pitch:%+5.1f deg | G:%.2fg    \n",
-                   cleanAngle, roll, pitch, accMag / 8192.0f);
-            printf("1-Euro Filter: Cutoff:%4.1f Hz (Min:%.2fHz, Beta:%.3f) | Gyro Rate:%+5.1f deg/s %s    \n",
+            printf("[PROXY LX:   %s] lx:%+6d (%+4.0f%%) | Mode:%s Lock:%.0f Dead:%.1f Smooth:%d%s    \n",
+                   bar, lx, ((float)lx / 327.67f), modeShort, maxAngle, deadzone, smoothing,
+                   (smoothing == 100 ? " (1:1)" : ""));
+            printf("[GAME RACK:  %s] Shift 2 Front Tyres:%+5.1f%% | Model: %s    \n",
+                   gameBar, inGameWheel * 100.0f,
+                   (handlingEnabled ? "1:1 PRE-COMPENSATED [0% Deadzone Swallow, 0% Quadratic Loss]" : "STOCK CRUSHED [Swallowed <3.75%, Squared X^2]"));
+            printf("Telemetry:   Steer:%+5.1f deg (1-Euro:%+5.1f) | Accel Roll:%+5.1f deg | Pitch:%+5.1f deg | G:%.2fg    \n",
+                   relAngle, cleanAngle, roll, pitch, accMag / 8192.0f);
+            printf("1-Euro Filt: Cutoff:%4.1f Hz (Min:%.2fHz, Beta:%.3f) | Gyro Rate:%+5.1f deg/s %s    \n",
                    currentCutoff, minCutoff, beta, gyroRollDps, (isFlicking ? "[*FLICK*]" : "       "));
-            printf("Pedals:    L2 Brake:%3u/255 | R2 Throttle:%3u/255                                      \n", l2, r2);
-            printf("Trackpad:  Pos:(%4d,%4d) d:(%+4d,%+4d) Flick:[%-8s] RightStick:(%+6d,%+6d)%s%s%s    \n",
+            printf("Pedals:      L2 Brake:%3u/255 | R2 Throttle:%3u/255                                      \n", l2, r2);
+            printf("Trackpad:    Pos:(%4d,%4d) d:(%+4d,%+4d) Flick:[%-8s] RightStick:(%+6d,%+6d)%s%s%s    \n",
                    tx, ty, dx, dy, flickDirStr, simRx, simRy, (tp ? " [CLICK]" : "        "),
                    (glanceRx ? " [GLANCE RX]" : ""),
                    (glanceLookBehindY ? " [LOOK BEHIND (Y)]" : ""));
             fflush(stdout);
-            Sleep(25);
         }
     }
 

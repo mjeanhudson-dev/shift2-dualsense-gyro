@@ -133,7 +133,7 @@ static Config DefaultConfig()
     c.boot = 0;         c.playerLeds = 1;        c.micLed = 1;      c.ledFlip = 0;
     c.lightBaseRed = 128; c.lightBaseGreen = 0; c.lightBaseBlue = 255;
     c.leanStart = 0;    c.leanInvert = 0;        c.leanMax = 25;    c.leanDead = 3;  c.leanStrength = 100;
-    c.handling = 0;     c.spoofWheel = 1;        c.stickDead = 3;   c.gameDead = 4;  c.steerCurve = 100; c.steerSat = 97;
+    c.handling = 1;     c.spoofWheel = 1;        c.stickDead = 3;   c.gameDead = 4;  c.steerCurve = 100; c.steerSat = 97;
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
     c.l3Handbrake = 1;  c.xHandbrake = 1;  c.psBtn = 1;
@@ -908,7 +908,7 @@ static struct {
     int gyroBiasSamples, gear;
     OneEuroFilter oneEuro;
     DWORD motionLast, tachLast, limiterSince, flickUntil, flickLockUntil, bootStart, leadLast, statusLast, recenterFlash;
-    DWORD lastRaceActivity, lastSteerFlush, lastRumble;
+    DWORD lastRaceActivity, lastSteerFlush, lastRumble, lastGyroTurnMs;
 } M;                                                  // owned by the reader thread
 
 static const float kMinGravity = 1638.0f;             // 20% of 1 g (8192 LSB); below this roll is ill-defined
@@ -957,10 +957,15 @@ static int Steer(float inputAngle = -999.0f)
     float n = (a - dz) / (mx - dz);
     if (n > 1.0f) n = 1.0f;
     n = powf(n, cfg.motionExpo / 100.0f);
-    if (cfg.handling && cfg.gameDead > 0) {
-        float g = cfg.gameDead / 100.0f;
-        float blend = (n < 0.25f) ? (n / 0.25f) : 1.0f;
-        n = (g * blend) + (1.0f - g * blend) * n;
+    if (cfg.handling) {
+        if (cfg.steerCurve > 0 && cfg.steerCurve != 100) {
+            n = powf(n, (float)cfg.steerCurve / 100.0f);
+        }
+        if (cfg.gameDead > 0) {
+            float g = cfg.gameDead / 100.0f;
+            float blend = (n < 0.25f) ? (n / 0.25f) : 1.0f;
+            n = (g * blend) + (1.0f - g * blend) * n;
+        }
     }
     return (int)lroundf((rel < 0 ? -n : n) * 32767.0f);
 }
@@ -970,19 +975,37 @@ static void MotionStep(float accelRoll, bool accelTrusted, float gyroRollDps, fl
     if (dt < 0.0f) dt = 0.0f;
     if (dt > 0.05f) dt = 0.05f;
     float predicted = Wrap(M.angle + gyroRollDps * dt);
+
+    // Virtual Steering Rack Stop Clamp:
+    // Prevents dead over-travel windup past full lock and eliminates +/-180 deg branch-cut sign flips!
+    float maxRackAngle = fminf(fmaxf((float)cfg.motionMax + 5.0f, 35.0f), 90.0f);
+    float relFromCenter = Wrap(predicted - M.center);
+    if (relFromCenter > maxRackAngle) {
+        predicted = Wrap(M.center + maxRackAngle);
+    } else if (relFromCenter < -maxRackAngle) {
+        predicted = Wrap(M.center - maxRackAngle);
+    }
+
     bool reclined = (fabsf(M.pitch) > 30.0f);
     if (accelTrusted && !reclined && dt > 0.0f) {
         bool vibrating = (g_steerVibeL > 0 || g_steerVibeR > 0 || g_kickOn || g_rumbleL > 0 || g_rumbleR > 0);
         bool inRace = !cfg.inRaceOnly || (ATOMIC_LOAD(g_raceActive) != 0);
         float relPred = fabsf(Wrap(predicted - M.center));
-        // Steady-state corner hold stability:
-        // When driving in race and holding a corner (|predicted - center| > 5.0 deg),
-        // ensure steady-state corner holds do not decay toward center (tau >= 25.0s during sustained holds).
+        float dz = fmaxf((float)cfg.motionDead, 1.0f);
+        bool gyroRecentlySteered = (M.lastGyroTurnMs != 0) &&
+                                   ((int32_t)(M.motionLast - M.lastGyroTurnMs) >= 0) &&
+                                   ((M.motionLast - M.lastGyroTurnMs) < 3500);
+        bool gravityReinforcing = (accelRoll * predicted >= 0.0f) && (fabsf(accelRoll) >= fabsf(predicted));
+
+        // Steady-state corner hold & turntable/yaw immunity:
+        // Whenever holding a turn in race (relPred > dz), or within 3.5s of an active gyro turn where
+        // gravity is nearer zero than the turned angle (!gravityReinforcing), use tau = 25.0s so
+        // accelRoll (~0 deg during flat/yaw turns) NEVER yanks the wheel back to center!
         float tau;
-        if (inRace && relPred > 5.0f) {
+        if (!gravityReinforcing && ((inRace && relPred > dz) || (gyroRecentlySteered && relPred > dz))) {
             tau = 25.0f;
-        } else if (fabsf(gyroRollDps) > 2.0f) {
-            tau = 8.0f;
+        } else if (!gravityReinforcing && fabsf(gyroRollDps) > 2.0f) {
+            tau = 12.0f;
         } else {
             tau = vibrating ? 0.85f : 0.22f;
         }
@@ -1424,17 +1447,20 @@ static void Parse(const uint8_t* b, DWORD n)
     float gyz = sqrtf(M.filtAy * M.filtAy + M.filtAz * M.filtAz);
     if (gyz < 100.0f) gyz = 100.0f;
     float invGyz = 1.0f / gyz;
-    float ny = M.filtAy * invGyz;
-    float nz = M.filtAz * invGyz;
+    // Use non-negative sagittal gravity weights (ny >= 0, nz >= 0) so pitching the controller
+    // forward (filtAz < 0) vs backward (filtAz > 0) NEVER flips the sign of rateY or cancels rateZ against rateY!
+    float ny = fabsf(M.filtAy) * invGyz;
+    float nz = fabsf(M.filtAz) * invGyz;
 
-    // Line-of-sight sagittal roll rate (wheel turning upright/reclined, banking when flat):
+    // 1. Sagittal roll rate (banking handles when flat, turning wheel when upright/reclined):
     float rollDps = -(rateZ * ny + rateY * nz);
-    // Direct face/turntable rotation rate (wheel turning upright, turntable plate turning when flat):
-    float turnDps = -rateZ;
+    // 2. Orthogonal turntable / yaw rate (turning wheel/plate when flat, vertical yaw when upright):
+    float turnDps = -(rateY * ny + rateZ * nz);
 
     float gyroRollDps = 0.0f;
     if (cfg.motionMode == 0) {
-        // 1st-Party Player Space: Unified Turn & Lean Auto-Blend (Ken Perlin C2 Smootherstep)
+        // Mode 0: 1st-Party Player Space — Unified Turn & Lean Auto-Blend (Ken Perlin C2 Smootherstep)
+        // Seamlessly blends sagittal roll (rollDps) and turntable yaw (turnDps) across all pitch angles (0-90 deg).
         float wRollSq = rollDps * rollDps;
         float wTurnSq = turnDps * turnDps;
         float wSumSq = wRollSq + wTurnSq;
@@ -1447,12 +1473,17 @@ static void Parse(const uint8_t* b, DWORD n)
             gyroRollDps = s * rollDps + (1.0f - s) * turnDps;
         }
     } else if (cfg.motionMode == 1) {
-        gyroRollDps = -rateY; // Flat pad mode
+        // Mode 1: Turntable / Flat Yaw Steering Mode (projects yaw across pitch, pure -rateY when flat)
+        gyroRollDps = turnDps;
     } else {
-        gyroRollDps = rollDps; // Pure Sagittal wheel mode
+        // Mode 2: Sagittal Wheel Roll Mode (projects roll across pitch, pure -rateZ when flat / -rateY when vertical)
+        gyroRollDps = rollDps;
     }
     if (cfg.motionInvert) gyroRollDps = -gyroRollDps;
     M.gyroRollRate = gyroRollDps;
+    if (fabsf(gyroRollDps) > 3.0f) {
+        M.lastGyroTurnMs = now;
+    }
     bool accelTrusted = rollOk && accelMagnitude > 0.70f * 8192.0f &&
         accelMagnitude < 1.35f * 8192.0f && fabsf(gyroRollDps) < 180.0f;
     float motionDt = M.motionLast ? (float)(DWORD)(now - M.motionLast) / 1000.0f : 0.0f;
@@ -1473,6 +1504,7 @@ static void Parse(const uint8_t* b, DWORD n)
         M.leanOn = cfg.leanStart != 0;
         M.have = true;
         M.steerOutput = 0.0f;
+        M.lastGyroTurnMs = 0;
     } else {
         float k = (cfg.motionSmooth >= 100 || cfg.motionSmooth <= 0) ? 1.0f : (cfg.motionSmooth / 100.0f);
         M.pitch += (pitch - M.pitch) * k;
@@ -1485,24 +1517,32 @@ static void Parse(const uint8_t* b, DWORD n)
     bool ps = (b2 & 0x01) != 0, tp = (b2 & 0x02) != 0, mic = (b2 & 0x04) != 0;
     int btnKl = 0, btnKr = 0, btnKms = 0;
 
-    if (ps && !M.prevPS) {              // PS button: re-center + reset car in Shift 2
-        M.center = M.angle;
+    if (ps && !M.prevPS) {              // PS button: re-center to 0.0f horizon + reset car in Shift 2
+        M.angle = 0.0f;
+        M.cleanAngle = 0.0f;
+        M.center = 0.0f;
         M.steerOutput = 0.0f;
         M.pitchCenter = M.pitch;
-        M.oneEuro.Reset(M.angle);
+        M.oneEuro.Reset(0.0f);
+        M.leadInit = false;
+        M.lastGyroTurnMs = 0;
         M.recenterFlash = now + 300;
         btnKl = btnKr = 140; btnKms = 60;
-        Log("re-centered via PS button at %.1f deg", (double)M.angle);
+        Log("re-centered via PS button to 0.0 deg horizon (raw roll %.1f deg)", (double)roll);
     }
-    if (mic && !M.prevMic) {            // Mute button: toggle motion steering ON/OFF + center
+    if (mic && !M.prevMic) {            // Mute button: toggle motion steering ON/OFF + center to 0.0f horizon
         LONG on = ATOMIC_LOAD(g_motionOn) ? 0 : 1;
         ATOMIC_STORE(g_motionOn, on);
-        M.center = M.angle;
+        M.angle = 0.0f;
+        M.cleanAngle = 0.0f;
+        M.center = 0.0f;
         M.steerOutput = 0.0f;
         M.pitchCenter = M.pitch;
-        M.oneEuro.Reset(M.angle);
+        M.oneEuro.Reset(0.0f);
+        M.leadInit = false;
+        M.lastGyroTurnMs = 0;
         M.recenterFlash = now + 250;
-        Log("motion steering %s via Mute button (center %.1f deg)", on ? "ON" : "OFF", (double)M.angle);
+        Log("motion steering %s via Mute button (center 0.0 deg horizon)", on ? "ON" : "OFF");
         if (on) { btnKl = btnKr = 150; btnKms = 60; }
         else    { btnKl = btnKr = 80;  btnKms = 40; }
     }
@@ -1596,8 +1636,9 @@ static void Parse(const uint8_t* b, DWORD n)
     }
 
     // ---- controller fast flick / motion vibration ----
+    // Gate flick vibration behind motionOn so muted motion steering never buzzes the controller when turning
     bool flickEdge = false;
-    if (cfg.flick) {
+    if (cfg.flick && motionOn) {
         float dpsX = rateX;
         float dpsY = rateY;
         float dpsZ = rateZ;
@@ -1609,7 +1650,7 @@ static void Parse(const uint8_t* b, DWORD n)
             Log("controller fast motion flick vibration (%.0f deg/s)", (double)maxDps);
         }
     }
-    bool flickOn = cfg.flick && (int32_t)(M.flickUntil - now) > 0;
+    bool flickOn = cfg.flick && motionOn && (int32_t)(M.flickUntil - now) > 0;
     if (flickOn && cfg.flickBtn >= 0 && cfg.flickBtn <= 9) w |= kFlickBtn[cfg.flickBtn];
 
     // ---- events that change the haptics / lights ----

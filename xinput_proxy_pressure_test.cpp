@@ -87,6 +87,10 @@ static void ResetMotion(float center = 0.0f)
     M.cleanAngle = center;
     M.oneEuro.Reset(center);
     M.steerOutput = 0.0f;
+    M.leadInit = false;
+    M.leadLast = 0;
+    M.lp = 0.0f;
+    M.lastGyroTurnMs = 0;
     M.motionLast = NowMs();
 }
 
@@ -149,6 +153,7 @@ static void PINPOINT_BOOT_HORIZON_ZERO()
         Frame(report);
         SetMotion(report, 0, 0, 0, 0, 8192, 0);
         M.motionLast = NowMs() - 5;
+        M.leadLast = NowMs() - 5;
         Send(report);
     }
 
@@ -163,6 +168,7 @@ static void PINPOINT_BOOT_HORIZON_ZERO()
         Frame(report);
         SetMotion(report, 0, 0, 0, 286, 8187, 0);
         M.motionLast = NowMs() - 5;
+        M.leadLast = NowMs() - 5;
         Send(report);
     }
     XState sLeft = State();
@@ -817,6 +823,168 @@ static void PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING()
     Check(ATOMIC_LOAD(g_loadRampStartMs) == 0, "loading exit ramp: g_loadRampStartMs reset to 0 upon completion");
 }
 
+static void PINPOINT_GAME_INVERSE_PRECOMPENSATION()
+{
+    std::cout << "\n[PINPOINT 9/9] Running PINPOINT_GAME_INVERSE_PRECOMPENSATION...\n";
+
+    // Configure handling pre-compensation:
+    cfg.handling = 1;
+    cfg.motionExpo = 100;
+    cfg.steerCurve = 50;   // inverse square-root power curve (pow(n, 0.5))
+    cfg.gameDead = 4;      // lifts above game's 3.75% deadzone
+    cfg.motionMax = 75;
+    cfg.motionDead = 1;
+    cfg.motionSmooth = 100; // direct 1:1
+
+    ResetMotion(0.0f);
+    M.center = 0.0f;
+    M.steerOutput = 0.0f;
+
+    // 1. Verify 0 deg tilt produces 0 output
+    M.cleanAngle = 0.0f;
+    int steer0 = Steer(0.0f);
+    Check(steer0 == 0, "pre-compensation: 0 deg tilt outputs exactly 0");
+
+    // 2. Verify subtle 10 deg tilt (physicalRatio = (10-1)/(75-1) = 0.1216)
+    // Raw target is pre-compensated to lift above deadzone and invert quadratic curve
+    M.cleanAngle = 10.0f;
+    int steer10 = Steer(10.0f);
+    float proxyNorm = (float)steer10 / 32767.0f;
+    Check(proxyNorm > 0.30f && proxyNorm < 0.45f, "pre-compensation: 10 deg tilt boosted to overcome Shift 2 gamepad model (>30% stick)");
+
+    // 3. Simulate Shift 2 game engine processing of steer10:
+    // Game subtracts 0.0375 deadzone, normalizes, and squares the result
+    float dead = 0.0375f;
+    float active = (proxyNorm - dead) / (1.0f - dead);
+    float inGameRack = active * active;
+    float physicalExpected = (10.0f - 1.0f) / (75.0f - 1.0f); // 0.1216
+    float error = fabsf(inGameRack - physicalExpected);
+    Check(error < 0.015f, "pre-compensation: Shift 2 game rack matches physical tilt within 1.5% linear parity");
+
+    // 4. Verify negative direction (-10 deg tilt)
+    M.cleanAngle = -10.0f;
+    int steerNeg10 = Steer(-10.0f);
+    Check(steerNeg10 == -steer10, "pre-compensation: negative steering is symmetrically inverted");
+
+    // 5. Verify full lock (75 deg tilt) reaches 100% (-32767 and +32767)
+    M.cleanAngle = 75.0f;
+    int steerLock = Steer(75.0f);
+    Check(steerLock == 32767, "pre-compensation: 75 deg full lock reaches 100% (+32767)");
+    M.cleanAngle = -75.0f;
+    int steerLockNeg = Steer(-75.0f);
+    Check(steerLockNeg == -32767, "pre-compensation: -75 deg full lock reaches 100% (-32767)");
+
+    // 6. Verify Lead filter dynamic boost on dynamic step
+    cfg.steerLead = 40;
+    cfg.steerLeadMs = 35;
+    DWORD now = NowMs();
+    M.leadLast = now - 16;
+    M.lp = 0.0f; // previous stick position was center
+    M.leadInit = true;
+    float leadOut = Lead((float)steer10 / 32767.0f, now);
+    Check(leadOut > proxyNorm, "pre-compensation: Lead filter injects velocity-derivative pre-charge during step transition");
+
+    // Restore test defaults
+    cfg.handling = 0;
+    cfg.steerLead = 0;
+}
+
+// ============================================================================
+// PINPOINT 10: Center Wiggle & Lock Immunity (3-Mode Fusion & Gravity Anchor)
+// ============================================================================
+static void PINPOINT_CENTER_WIGGLE_AND_LOCK_IMMUNITY()
+{
+    std::cout << "\n[PINPOINT 10/10] Center Wiggle & Lock Immunity (3-Mode Fusion, Yaw Hold, PS Lock & Rack Stop)...\n";
+    uint8_t r[kReportLen];
+
+    cfg.motionMode = 0;
+    cfg.motionMax = 55;
+    cfg.motionDead = 1;
+    cfg.motionSmooth = 100;
+    cfg.handling = 1;
+    cfg.gameDead = 4;
+    ATOMIC_STORE(g_motionOn, 1);
+
+    // 1. Flat/Turntable Yaw Steering Hold (No Center Wiggle Snapback):
+    // Controller held nearly flat (pitch ~ -7 deg: ay=8100, az=-1000, ax=0 -> accelRoll = 0 deg).
+    // Turn around Y axis (-60 deg/s -> gyroY = -960) for 125 frames (0.5s -> ~30 deg),
+    // then hold still for 250 frames (1.0s) while accelRoll remains 0 deg.
+    ResetMotion(0.0f);
+    for (int i = 0; i < 125; ++i) {
+        Frame(r);
+        SetMotion(r, 0, -960, 0, 0, 8100, -1000);
+        M.motionLast = NowMs() - 4;
+        Send(r);
+    }
+    Check(M.cleanAngle > 22.0f, "flat/turntable yaw: Mode 0 captures rateY to reach >22 deg steering angle");
+    for (int i = 0; i < 250; ++i) {
+        Frame(r);
+        SetMotion(r, 0, 0, 0, 0, 8100, -1000); // stationary hold with accelRoll = 0 deg
+        M.motionLast = NowMs() - 4;
+        Send(r);
+    }
+    Check(M.cleanAngle > 20.0f && g_pad.lx > 20000,
+          "flat/turntable yaw hold: accelRoll=0 does NOT yank steering back to center wiggle (>20 deg held)");
+
+    // 2. Forward-Tilted Sagittal Roll + Yaw Non-Cancellation across Mode 0, 1, 2:
+    // At -45 deg forward pitch (ay=5800, az=-5800), simultaneous gyroZ=-960 and gyroY=-960
+    // must constructively project (>75 deg/s) instead of cancelling out due to negative filtAz.
+    for (int mode = 0; mode <= 2; ++mode) {
+        cfg.motionMode = mode;
+        ResetMotion(0.0f);
+        M.filtAy = 5800.0f;
+        M.filtAz = -5800.0f;
+        Frame(r);
+        SetMotion(r, 0, -960, -960, 0, 5800, -5800);
+        M.motionLast = NowMs() - 4;
+        Send(r);
+        Check(M.gyroRollRate > 75.0f,
+              mode == 0 ? "3-mode fusion (Mode 0 Auto-Blend): forward pitch (-45 deg) has zero axis cancellation (>75 deg/s)" :
+              mode == 1 ? "3-mode fusion (Mode 1 Turntable Yaw): forward pitch (-45 deg) has zero axis cancellation (>75 deg/s)" :
+                          "3-mode fusion (Mode 2 Wheel Roll): forward pitch (-45 deg) has zero axis cancellation (>75 deg/s)");
+    }
+    cfg.motionMode = 0;
+
+    // 3. PS Button Re-Center Immunity When Tilted (Prevents 72 deg Off-Axis Lock):
+    ResetMotion(0.0f);
+    M.angle = 65.0f;
+    M.cleanAngle = 65.0f;
+    Frame(r);
+    SetMotion(r, 0, 0, 0, -7500, 2500, 0); // ~71.5 deg roll tilt
+    r[10] = 0x01; // PS Button pressed
+    M.motionLast = NowMs() - 4;
+    Send(r);
+    Check(fabsf(M.center) < 0.01f && fabsf(M.angle) < 0.01f,
+          "PS button safety: pressing PS at 71.5 deg tilt resets to 0.0 horizon without latching 72 deg lock");
+
+    // 4. Virtual Steering Rack Stop Clamp (Prevents +-180 deg Windup Sign Flip):
+    ResetMotion(0.0f);
+    bool neverFlippedNegative = true;
+    for (int i = 0; i < 250; ++i) {
+        Frame(r);
+        SetMotion(r, 0, 0, -8000, 0, 8192, 0); // +500 deg/s for 1.0s = +500 deg total rotation
+        M.motionLast = NowMs() - 4;
+        Send(r);
+        if (g_pad.lx < 0) neverFlippedNegative = false;
+    }
+    Check(neverFlippedNegative && M.angle <= 65.0f && g_pad.lx == 32767,
+          "virtual rack stop: 500 deg over-rotation clamps smoothly at rack stop (+32767) without +-180 sign flip");
+
+    // 5. Muted Flick Suppression:
+    cfg.flick = 1;
+    ATOMIC_STORE(g_motionOn, 0);
+    g_kickOn = false;
+    M.flickLockUntil = 0;
+    Frame(r);
+    SetMotion(r, 8000, 0, 0, 0, 8192, 0); // 500 deg/s spike while motion is muted
+    M.motionLast = NowMs() - 4;
+    Send(r);
+    Check(!g_kickOn, "muted flick suppression: gyro spikes do not fire flick vibration when motion is muted");
+
+    ATOMIC_STORE(g_motionOn, 1);
+    cfg.handling = 0;
+}
+
 int main()
 {
     g_inst = GetModuleHandleW(NULL);
@@ -843,6 +1011,8 @@ int main()
     PINPOINT_ASYMMETRIC_RACK_DAMPENING();
     PINPOINT_X_A_HANDBRAKE_MAPPING();
     PINPOINT_WHEEL_SPOOFING_AND_ZERO_DAMPING();
+    PINPOINT_GAME_INVERSE_PRECOMPENSATION();
+    PINPOINT_CENTER_WIGGLE_AND_LOCK_IMMUNITY();
 
     if (g_wEvent) CloseHandle(g_wEvent);
     DeleteCriticalSection(&g_cs);

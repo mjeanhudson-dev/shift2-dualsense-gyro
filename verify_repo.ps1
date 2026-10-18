@@ -117,7 +117,12 @@ $docs = @(
     "PROJECT_HANDOFF.md",
     "BOUNTY_BOARD.md",
     "MULTIAGENT_PROTOCOLS.md",
-    "verify_repo.ps1"
+    "verify_repo.ps1",
+    "xinput_proxy.cpp",
+    "gyro_workshop.cpp",
+    "xinput_proxy_pressure_test.cpp",
+    "build.bat",
+    "xinput1_3.def"
 )
 
 if ($Deploy) {
