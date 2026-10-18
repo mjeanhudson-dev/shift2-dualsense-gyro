@@ -136,7 +136,7 @@ static Config DefaultConfig()
     c.handling = 1;     c.spoofWheel = 1;        c.stickDead = 3;   c.gameDead = 4;  c.steerCurve = 100; c.steerSat = 97;
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
-    c.l3Handbrake = 1;  c.xHandbrake = 1;  c.psBtn = 1;
+    c.l3Handbrake = 1;  c.xHandbrake = 0;  c.psBtn = 1;
     c.steerVibe = 1;    c.steerVibeMax = 60;     c.steerVibeDead = 5;  c.steerVibeCurve = 100;  c.steerVibeDir = 1;
     c.menuButtonVibe = 1;       c.menuButtonPower = 55;     c.menuButtonMs = 25;
     c.menuTriggerMode = 0;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;

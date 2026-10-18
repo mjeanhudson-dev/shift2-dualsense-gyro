@@ -225,10 +225,10 @@ All deployment artifacts MUST remain byte-identical across:
 
 | Binary / File | Size (Bytes) | SHA256 Checksum | Workspace Status | Staging Status | Game Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `xinput1_3.dll` | 95,744 | `A621E9315201AB73A71064B137C91368E814E65053B3A2E6C5003B9C656AAE1E` | Verified | Verified | Verified |
-| `shift2_dualsense.ini` | 15,198 | `55048A2126D0499AEA6956C0A2011D09F25919EBCED99EBA96185CD0B4D8530B` | Verified | Verified | Verified |
-| `gyro_workshop.exe` | 84,480 | `3BE4DB27022B63322FBB1235DAE6AD2E46DCD737375BD40EF814C6038C0B7FD3` | Verified | Verified | Verified |
-| `xinput_proxy_pressure_test.exe` | 1,242,112 | `206B2C14B87E24DC26FF623628A3C88902E7F2A7FC88AF07B4543CBF5EFC5782` | Verified | Verified | Verified |
+| `xinput1_3.dll` | 95,744 | `F0CBF02399D20C106E93FEBFBB6C21ABE373945B9CFE4AA463D8157A842B9163` | Verified | Verified | Verified |
+| `shift2_dualsense.ini` | 15,198 | `AB0A486E4D8C91F744EE06AEBAF0A72FFBD1B6C7355C82CF19988834ADBD7A2C` | Verified | Verified | Verified |
+| `gyro_workshop.exe` | 84,480 | `8306446DF2C64C3549050550E818073F42C912716792EBF60D792D8154B8606A` | Verified | Verified | Verified |
+| `xinput_proxy_pressure_test.exe` | 1,242,112 | `A6B3221CBD0C5C56BB09AED315A2BD7B700AD8A9467CA74F7E3AE1917D1A518E` | Verified | Verified | Verified |
 
 ### Automated Parity Verification
 Incoming agents can verify full cryptographic parity across all three locations with a single command:
@@ -279,6 +279,8 @@ This created the symptom where subtle 1mm motions were completely swallowed, and
    All 5 PC controller XML presets in `ControllerDefaults\PC\` have been zeroed (`DampeningEnabled="0"`, all dampening times = `0.000000`, deadzone = `0.000000`, sensitivity = `0.500000` linear).
 3. **Proxy 1:1 Passthrough:**
    `[Handling] Enabled=0` and `[Motion] Smoothing=100` route the rate-driven 1-Euro filtered steering angle directly to `lx` with $<2.5\text{ ms}$ latency.
+
+
 
 
 

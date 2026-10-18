@@ -718,6 +718,7 @@ static void PINPOINT_X_A_HANDBRAKE_MAPPING()
     Frame(report);
     Send(report);
     cfg.inRaceOnly = 1;
+    cfg.xHandbrake = 0;
 }
 
 // ============================================================================
