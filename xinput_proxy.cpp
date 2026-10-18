@@ -114,19 +114,19 @@ static Config DefaultConfig()
 {
     Config c = {};
     c.motionStart = 1;  c.motionMode = 0;  c.motionInvert = 0;
-    c.motionMax = 75;   c.motionDead = 1;  c.motionExpo = 100;  c.motionSmooth = 100;
+    c.motionMax = 35;   c.motionDead = 1;  c.motionExpo = 115;  c.motionSmooth = 75;
     c.oneEuroMinCutoff = 120; c.oneEuroBeta = 40;
     c.gyroBiasX = 0.0f; c.gyroBiasY = 0.0f; c.gyroBiasZ = 0.0f;
     c.trig = 1;
     c.brakeZone = 2;    c.brakeStrength = 3;     c.brakeEnd = 7;
     c.throttleZone = 0; c.throttleStrength = 1;  c.throttleEnd = 1;
-    c.rumbleToTrig = 1; c.rumbleThresh = 40;     c.brakeFreq = 30;  c.throttleFreq = 40;  c.throttleVibeMax = 5;
+    c.rumbleToTrig = 1; c.rumbleThresh = 40;     c.brakeFreq = 30;  c.throttleFreq = 40;  c.throttleVibeMax = 0;
     c.absEnable = 1;    c.absThresh = 215;       c.absHyst = 20;    c.absFreq = 40;  c.absStrength = 8;
     c.grip = 1;         c.gripBoost = 3;
     c.kickShift = 1;    c.kickAbs = 1;           c.kickPower = 180; c.kickMs = 70;   c.lockKick = 0;  c.lockPower = 130;
     c.crashEnable = 1;  c.crashThresh = 200;     c.crashJump = 120; c.crashMs = 600; c.crashFreq = 50;
     c.tach = 1;         c.redline = 93;          c.autoShift = 0;   c.inverseShift = 0;
-    c.limiter = 1;      c.limiterZone = 8;       c.limiterStrength = 3;  c.limiterFreq = 25;
+    c.limiter = 0;      c.limiterZone = 8;       c.limiterStrength = 3;  c.limiterFreq = 25;
     c.flick = 1;        c.flickThresh = 340;     c.flickMs = 90;    c.flickLock = 400;   c.flickBtn = -1;
     c.glance = 1;       c.glanceStrength = 100;  c.glanceDead = 12;
     c.light = 1;        c.telemetry = 0;         c.strobe = 1;      c.strobeHz = 10;
@@ -137,7 +137,7 @@ static Config DefaultConfig()
     c.steerLead = 0;    c.steerLeadMs = 40;      c.traction = 0;    c.tractionCut = 15;
     c.inRaceOnly = 1;   c.raceTimeoutMs = 4000;
     c.l3Handbrake = 1;  c.xHandbrake = 1;  c.psBtn = 1;
-    c.steerVibe = 1;    c.steerVibeMax = 25;     c.steerVibeDead = 10; c.steerVibeCurve = 100;  c.steerVibeDir = 1;
+    c.steerVibe = 1;    c.steerVibeMax = 60;     c.steerVibeDead = 5;  c.steerVibeCurve = 100;  c.steerVibeDir = 1;
     c.menuButtonVibe = 1;       c.menuButtonPower = 55;     c.menuButtonMs = 25;
     c.menuTriggerMode = 0;      c.menuTriggerStrength = 1;  c.menuTriggerZone = 0;
     c.threadBoost = 1;
@@ -1636,13 +1636,11 @@ static void Parse(const uint8_t* b, DWORD n)
     }
 
     // ---- controller fast flick / motion vibration ----
-    // Gate flick vibration behind motionOn so muted motion steering never buzzes the controller when turning
+    // Gate flick vibration behind motionOn and evaluate on sagittal wrist pitch (dpsX) so steering turns (dpsY/dpsZ) never fire false flick jolts
     bool flickEdge = false;
     if (cfg.flick && motionOn) {
         float dpsX = rateX;
-        float dpsY = rateY;
-        float dpsZ = rateZ;
-        float maxDps = fmaxf(fabsf(dpsX), fmaxf(fabsf(dpsY), fabsf(dpsZ)));
+        float maxDps = fabsf(dpsX);
         if (maxDps >= (float)cfg.flickThresh && (int32_t)(now - M.flickLockUntil) >= 0) {
             M.flickUntil = now + (DWORD)cfg.flickMs;
             M.flickLockUntil = now + (DWORD)cfg.flickLock;
@@ -1764,13 +1762,13 @@ static void Parse(const uint8_t* b, DWORD n)
     int statusEvery = (motionOn || glanceRx || glanceRy || flickOn || targetVibeL || targetVibeR) ? 1000 : 10000;
     if (cfg.debug && (int32_t)(now - M.statusLast) >= statusEvery) {
         M.statusLast = now;
-        Log("status: getState/period=%ld motion=%d mode=%d accel=%d/%d/%d g=%.2f gyroRaw=%d/%d/%d gyroRoll=%.1f bias=%.2f/%.2f/%.2f (%d) roll=%.1f center=%.1f pitch=%.1f tiltSteer=%d stick=%u/%d glance=(%d,%d) flick=%d stVibe=%d/%d -> game lx=%d rx=%d ry=%d L2=%d R2=%d btn=%04X",
+        Log("status: getState/period=%ld motion=%d mode=%d accel=%d/%d/%d g=%.2f gyroRaw=%d/%d/%d gyroRoll=%.1f bias=%.2f/%.2f/%.2f (%d) roll=%.1f center=%.1f pitch=%.1f tiltSteer=%d stick=%u/%d glance=(%d,%d) flick=%d rumble=%d/%d stVibe=%d/%d -> game lx=%d rx=%d ry=%d L2=%d R2=%d btn=%04X",
             (long)InterlockedExchange(&g_getStateCalls, 0), motionOn ? 1 : 0, cfg.motionMode,
             (int)M.filtAx, (int)M.filtAy, (int)M.filtAz, (double)(accelMagnitude / 8192.0f),
             gx, gy, gz, (double)M.gyroRollRate, (double)M.gyroBiasX, (double)M.gyroBiasY, (double)M.gyroBiasZ, M.gyroBiasSamples,
             (double)M.angle, (double)M.center, (double)M.pitch,
             steer, (unsigned)d[0], rawStickLX, glanceRx, glanceRy, flickOn ? 1 : 0,
-            (int)targetVibeL, (int)targetVibeR,
+            (int)g_rumbleL, (int)g_rumbleR, (int)targetVibeL, (int)targetVibeR,
             (int)p.lx, (int)p.rx, (int)p.ry, (int)p.bLeftTrigger, (int)p.bRightTrigger, (unsigned)p.wButtons);
     }
 
@@ -2100,6 +2098,147 @@ __declspec(dllexport) DWORD WINAPI XInputGetDSoundAudioDeviceGuids(DWORD idx, GU
 
 } // extern "C"
 
+// ------------------------------------------------- DirectInput8 HidHide Filter
+// Prevents DINPUT8.dll from enumerating the raw physical Sony DualSense (VID 0x054C) as a duplicate
+// DirectInput gamepad ("Wireless Controller" DeviceIndex=4 in Shift 2), ensuring Shift 2 binds 100%
+// exclusively to XInput DeviceIndex=0 (our gyro proxy) for both steering and native road FFB rumble.
+struct DiDevInstancePrefix {
+    DWORD dwSize;
+    GUID  guidInstance;
+    GUID  guidProduct;
+    DWORD dwDevType;
+};
+
+typedef BOOL (CALLBACK *DIEnumDevicesCallbackFn)(const void* lpddi, void* pvRef);
+typedef HRESULT (WINAPI *DICreateDeviceFn)(void* thisPtr, const GUID* rguid, void** lplpDevice, void* pUnkOuter);
+typedef HRESULT (WINAPI *DIEnumDevicesFn)(void* thisPtr, DWORD dwDevType, DIEnumDevicesCallbackFn lpCallback, void* pvRef, DWORD dwFlags);
+typedef HRESULT (WINAPI *DirectInput8CreateFn)(HINSTANCE hinst, DWORD dwVersion, const GUID* riidltf, void** ppvOut, void* punkOuter);
+
+static DirectInput8CreateFn g_realDirectInput8Create = NULL;
+static DICreateDeviceFn     g_realDICreateDevice = NULL;
+static DIEnumDevicesFn      g_realDIEnumDevices = NULL;
+static GUID                 g_blockedSonyInstanceGuid = {};
+static volatile LONG        g_haveBlockedSonyGuid = 0;
+static volatile LONG        g_dinputIatHooked = 0;
+
+struct DIEnumFilterCtx {
+    DIEnumDevicesCallbackFn origCallback;
+    void*                   origRef;
+};
+
+static BOOL CALLBACK FilterDIEnumCallback(const void* lpddi, void* pvRef)
+{
+    DIEnumFilterCtx* ctx = (DIEnumFilterCtx*)pvRef;
+    if (!ctx || !ctx->origCallback) return 0; // DIENUM_STOP
+    if (lpddi) {
+        const DiDevInstancePrefix* dev = (const DiDevInstancePrefix*)lpddi;
+        // Sony Vendor ID is 0x054C (DualSense = 0x0CE6054C, DualSense Edge = 0x0DF2054C)
+        if ((dev->guidProduct.Data1 & 0xFFFF) == 0x054C) {
+            g_blockedSonyInstanceGuid = dev->guidInstance;
+            ATOMIC_STORE(g_haveBlockedSonyGuid, 1);
+            Log("[DirectInput] HidHide Filter: hid duplicate raw Sony controller (ProductGUID.Data1=0x%08lX) from DINPUT8 EnumDevices!",
+                (unsigned long)dev->guidProduct.Data1);
+            return 1; // DIENUM_CONTINUE (skip passing duplicate DirectInput pad to game)
+        }
+    }
+    return ctx->origCallback(lpddi, ctx->origRef);
+}
+
+static HRESULT WINAPI HookedDICreateDevice(void* thisPtr, const GUID* rguid, void** lplpDevice, void* pUnkOuter)
+{
+    if (rguid) {
+        bool isSonyProduct = ((rguid->Data1 & 0xFFFF) == 0x054C) && (rguid->Data2 == 0) && (rguid->Data3 == 0);
+        bool isSonyInstance = (ATOMIC_LOAD(g_haveBlockedSonyGuid) != 0) && (memcmp(rguid, &g_blockedSonyInstanceGuid, sizeof(GUID)) == 0);
+        if (isSonyProduct || isSonyInstance) {
+            Log("[DirectInput] HidHide Filter: blocked CreateDevice on raw Sony controller GUID -> enforcing XInput DeviceIndex=0!");
+            return (HRESULT)0x80040154L; // DIERR_DEVICENOTREG
+        }
+    }
+    return g_realDICreateDevice ? g_realDICreateDevice(thisPtr, rguid, lplpDevice, pUnkOuter) : E_FAIL;
+}
+
+static HRESULT WINAPI HookedDIEnumDevices(void* thisPtr, DWORD dwDevType, DIEnumDevicesCallbackFn lpCallback, void* pvRef, DWORD dwFlags)
+{
+    if (!g_realDIEnumDevices) return E_FAIL;
+    DIEnumFilterCtx ctx = { lpCallback, pvRef };
+    return g_realDIEnumDevices(thisPtr, dwDevType, FilterDIEnumCallback, &ctx, dwFlags);
+}
+
+static HRESULT WINAPI HookedDirectInput8Create(HINSTANCE hinst, DWORD dwVersion, const GUID* riidltf, void** ppvOut, void* punkOuter)
+{
+    if (!g_realDirectInput8Create) {
+        HMODULE hDI = LoadLibraryW(L"dinput8.dll");
+        if (hDI) g_realDirectInput8Create = (DirectInput8CreateFn)GetProcAddress(hDI, "DirectInput8Create");
+    }
+    if (!g_realDirectInput8Create) return E_FAIL;
+    HRESULT hr = g_realDirectInput8Create(hinst, dwVersion, riidltf, ppvOut, punkOuter);
+    Log("game called DirectInput8Create (hr=0x%08lX)", (unsigned long)hr);
+    if (SUCCEEDED(hr) && ppvOut && *ppvOut) {
+        void** vtbl = *(void***)(*ppvOut);
+        DWORD oldProt = 0;
+        if (vtbl && VirtualProtect(&vtbl[3], 2 * sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProt)) {
+            if (vtbl[3] != (void*)HookedDICreateDevice) {
+                g_realDICreateDevice = (DICreateDeviceFn)vtbl[3];
+                vtbl[3] = (void*)HookedDICreateDevice;
+            }
+            if (vtbl[4] != (void*)HookedDIEnumDevices) {
+                g_realDIEnumDevices = (DIEnumDevicesFn)vtbl[4];
+                vtbl[4] = (void*)HookedDIEnumDevices;
+            }
+            VirtualProtect(&vtbl[3], 2 * sizeof(void*), oldProt, &oldProt);
+            Log("[DirectInput] HidHide Filter hooked IDirectInput8::CreateDevice & EnumDevices");
+        }
+    }
+    return hr;
+}
+
+static void InstallDirectInputFilter()
+{
+    HMODULE hExe = GetModuleHandleW(NULL);
+    if (!hExe) return;
+    BYTE* base = (BYTE*)hExe;
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    DWORD impRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    if (!impRva) return;
+
+    IMAGE_IMPORT_DESCRIPTOR* imp = (IMAGE_IMPORT_DESCRIPTOR*)(base + impRva);
+    for (; imp->Name != 0; ++imp) {
+        const char* dllName = (const char*)(base + imp->Name);
+        if (_stricmp(dllName, "dinput8.dll") != 0) continue;
+
+        IMAGE_THUNK_DATA* origThunk = imp->OriginalFirstThunk ? (IMAGE_THUNK_DATA*)(base + imp->OriginalFirstThunk) : NULL;
+        IMAGE_THUNK_DATA* iatThunk  = (IMAGE_THUNK_DATA*)(base + imp->FirstThunk);
+        for (; iatThunk->u1.Function != 0; ++iatThunk, origThunk ? ++origThunk : NULL) {
+            bool match = false;
+            if (origThunk && !(origThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG)) {
+                IMAGE_IMPORT_BY_NAME* byName = (IMAGE_IMPORT_BY_NAME*)(base + origThunk->u1.AddressOfData);
+                if (strcmp((const char*)byName->Name, "DirectInput8Create") == 0) match = true;
+            }
+            if (!match) {
+                HMODULE hDI = GetModuleHandleW(L"dinput8.dll");
+                if (hDI) {
+                     FARPROC proc = GetProcAddress(hDI, "DirectInput8Create");
+                    if (proc && iatThunk->u1.Function == (ULONG_PTR)proc) match = true;
+                }
+            }
+            if (match) {
+                DWORD oldProt = 0;
+                if (VirtualProtect(&iatThunk->u1.Function, sizeof(ULONG_PTR), PAGE_EXECUTE_READWRITE, &oldProt)) {
+                    if ((void*)iatThunk->u1.Function != (void*)HookedDirectInput8Create) {
+                        g_realDirectInput8Create = (DirectInput8CreateFn)iatThunk->u1.Function;
+                        iatThunk->u1.Function = (ULONG_PTR)HookedDirectInput8Create;
+                        ATOMIC_STORE(g_dinputIatHooked, 1);
+                    }
+                    VirtualProtect(&iatThunk->u1.Function, sizeof(ULONG_PTR), oldProt, &oldProt);
+                }
+            }
+        }
+    }
+}
+
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -2107,6 +2246,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
         DisableThreadLibraryCalls(inst);
         InitializeCriticalSection(&g_cs);
         g_wEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        InstallDirectInputFilter();
         HANDLE t = CreateThread(NULL, 0, ReaderThread, NULL, 0, NULL);
         if (t) CloseHandle(t);
     } else if (reason == DLL_PROCESS_DETACH) {
