@@ -1,0 +1,12 @@
+; Export ordinals must match the real Microsoft xinput1_3.dll.
+; Shift 2 imports this DLL by ORDINAL (5, 2, 3 = Enable, GetState, SetState), not by name.
+; Built with -Wl,--kill-at so the exported names have no @N suffix.
+LIBRARY xinput1_3
+EXPORTS
+    XInputGetState@8                   @2
+    XInputSetState@8                   @3
+    XInputGetCapabilities@12           @4
+    XInputEnable@4                     @5
+    XInputGetDSoundAudioDeviceGuids@12 @6
+    XInputGetBatteryInformation@12     @7
+    XInputGetKeystroke@12              @8

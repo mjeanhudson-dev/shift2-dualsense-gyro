@@ -1,0 +1,118 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+echo.
+echo === DualSense XInput proxy builder (32-bit) ===
+echo Tip: drag the GAME'S FOLDER (or its .exe) onto this file to build AND install in one step.
+echo.
+
+set "GPP="
+if exist "C:\msys64\mingw32\bin\g++.exe" set "GPP=C:\msys64\mingw32\bin\g++.exe"
+if not defined GPP for /f "delims=" %%i in ('where g++ 2^>nul') do if not defined GPP set "GPP=%%i"
+if not defined GPP goto nocompiler
+
+for /f "delims=" %%t in ('"%GPP%" -dumpmachine') do set "TARGET=%%t"
+echo Compiler: %GPP%
+echo Target:   %TARGET%
+echo %TARGET%| find /i "i686" >nul
+if errorlevel 1 goto wrongarch
+
+for %%d in ("%GPP%") do set "PATH=%%~dpd;%PATH%"
+
+"%GPP%" -std=c++17 -O2 -Wall -Wno-cast-function-type -shared -static -static-libgcc -static-libstdc++ -s -o xinput1_3.dll xinput_proxy.cpp xinput1_3.def -lsetupapi -Wl,--kill-at
+if errorlevel 1 goto failed
+echo.
+echo Built xinput1_3.dll
+
+if exist xinput_proxy_pressure_test.cpp (
+    "%GPP%" -std=c++17 -O2 -Wall -Wno-cast-function-type -static -static-libgcc -static-libstdc++ -s -o xinput_proxy_pressure_test.exe xinput_proxy_pressure_test.cpp -lsetupapi
+    if not errorlevel 1 echo Built xinput_proxy_pressure_test.exe
+)
+
+if exist gyro_workshop.cpp (
+    "%GPP%" -std=c++17 -O2 -Wall -Wextra -static -static-libgcc -static-libstdc++ -s -o gyro_workshop.exe gyro_workshop.cpp -lsetupapi
+    if not errorlevel 1 echo Built gyro_workshop.exe
+)
+
+set "DEST=%~1"
+if /i "%DEST%"=="--deploy" goto deploy_all
+if /i "%DEST%"=="--all" goto deploy_all
+if /i "%DEST%"=="-a" goto deploy_all
+if /i "%DEST%"=="/all" goto deploy_all
+if not defined DEST goto manual
+if exist "%DEST%\" (set "DEST=%DEST%\") else for %%f in ("%DEST%") do set "DEST=%%~dpf"
+dir /b "%DEST%*.exe" >nul 2>nul
+if errorlevel 1 echo WARNING: no .exe found in %DEST% - is this really the game folder?
+set "NAME=%~2"
+if not defined NAME set "NAME=xinput1_3"
+copy /y xinput1_3.dll "%DEST%%NAME%.dll" >nul
+if errorlevel 1 goto copyfail
+if exist xinput_proxy_pressure_test.exe copy /y xinput_proxy_pressure_test.exe "%DEST%" >nul
+if exist gyro_workshop.exe copy /y gyro_workshop.exe "%DEST%" >nul
+if exist SHARED_REPOSITORY.md copy /y SHARED_REPOSITORY.md "%DEST%" >nul
+if exist PROJECT_HANDOFF.md copy /y PROJECT_HANDOFF.md "%DEST%" >nul
+if exist BOUNTY_BOARD.md copy /y BOUNTY_BOARD.md "%DEST%" >nul
+if exist MULTIAGENT_PROTOCOLS.md copy /y MULTIAGENT_PROTOCOLS.md "%DEST%" >nul
+if exist verify_repo.ps1 copy /y verify_repo.ps1 "%DEST%" >nul
+if exist ..\GLOBAL_KNOWLEDGE_INDEX.md copy /y ..\GLOBAL_KNOWLEDGE_INDEX.md "%DEST%" >nul
+if exist "%DEST%shift2_dualsense.ini" goto keepini
+copy shift2_dualsense.ini "%DEST%" >nul
+goto inidone
+:keepini
+copy /y shift2_dualsense.ini "%DEST%shift2_dualsense.new.ini" >nul
+echo Kept your existing shift2_dualsense.ini. New settings and notes are in shift2_dualsense.new.ini - compare the two.
+:inidone
+echo Installed %NAME%.dll into %DEST%
+echo Log file after a run: shift2_dualsense.log in that folder (or in %%TEMP%%)
+goto end
+
+:deploy_all
+echo Deploying atomically to Desktop Staging and Game Directory...
+set "TARGET1=C:\Users\Zachariah\Desktop\Shift2\"
+set "TARGET2=C:\Users\Zachariah\Downloads\Need for Speed Shift 2 Unleashed\Need for Speed Shift 2 Unleashed\"
+for %%D in ("%TARGET1%" "%TARGET2%") do (
+    if exist "%%~D" (
+        echo   Deploying to %%~D...
+        copy /y xinput1_3.dll "%%~Dxinput1_3.dll" >nul
+        if exist xinput_proxy_pressure_test.exe copy /y xinput_proxy_pressure_test.exe "%%~D" >nul
+        if exist gyro_workshop.exe copy /y gyro_workshop.exe "%%~D" >nul
+        if exist shift2_dualsense.ini copy /y shift2_dualsense.ini "%%~D" >nul
+        if exist SHARED_REPOSITORY.md copy /y SHARED_REPOSITORY.md "%%~D" >nul
+        if exist PROJECT_HANDOFF.md copy /y PROJECT_HANDOFF.md "%%~D" >nul
+        if exist BOUNTY_BOARD.md copy /y BOUNTY_BOARD.md "%%~D" >nul
+        if exist MULTIAGENT_PROTOCOLS.md copy /y MULTIAGENT_PROTOCOLS.md "%%~D" >nul
+        if exist verify_repo.ps1 copy /y verify_repo.ps1 "%%~D" >nul
+        if exist ..\GLOBAL_KNOWLEDGE_INDEX.md copy /y ..\GLOBAL_KNOWLEDGE_INDEX.md "%%~D" >nul
+    )
+)
+echo Parity deployment complete.
+powershell -ExecutionPolicy Bypass -File .\verify_repo.ps1 -SkipTests
+goto end
+
+
+:manual
+echo Copy xinput1_3.dll and shift2_dualsense.ini next to the game's .exe.
+goto end
+
+:nocompiler
+echo No g++ found. Install MSYS2, open its MINGW32 shell and run:
+echo     pacman -S mingw-w64-i686-gcc
+echo Then run this file again.
+goto end
+
+:wrongarch
+echo That g++ is not the 32-bit one (target must contain i686).
+echo In the MSYS2 MINGW32 shell run: pacman -S mingw-w64-i686-gcc
+goto end
+
+:failed
+echo.
+echo BUILD FAILED - copy the error text above and send it to me.
+goto end
+
+:copyfail
+echo Could not copy into %DEST% - try again as administrator, or copy the files by hand.
+
+:end
+echo.
+if not defined NO_PAUSE if not defined CI pause

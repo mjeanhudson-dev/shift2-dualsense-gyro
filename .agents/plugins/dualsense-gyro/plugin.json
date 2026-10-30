@@ -1,0 +1,19 @@
+{
+  "name": "dualsense-gyro",
+  "displayName": "DualSense Gyro Steering & Racing Haptics",
+  "version": "1.0.0",
+  "description": "First-party DualSense USB HID 6-axis gyro steering, 1-Euro adaptive filtering, adaptive triggers, haptics, and mathematical inverse pre-compensation for racing simulators and NFS Shift 2 Unleashed.",
+  "author": {
+    "name": "Antigravity Engineering"
+  },
+  "keywords": [
+    "dualsense",
+    "gyro",
+    "motion-steering",
+    "haptics",
+    "racing",
+    "xinput",
+    "shift2",
+    "1-euro-filter"
+  ]
+}
