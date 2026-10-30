@@ -28,7 +28,7 @@ switch ($Mode) {
     "Status" {
         Write-Host "Active Incubator Vault: $incubatorPath"
         if (Test-Path $incubatorPath) {
-            $tracks = Select-String -Path $incubatorPath -Pattern "## (?:🥩|🧬|🎮|⚖️|🛡️) Track \d+: (.+)"
+            $tracks = Select-String -Path $incubatorPath -Pattern "## (?:🥩|🧬|🎮|⚖️|🛡️|✈️) Track \d+: (.+)"
             Write-Host "`nRegistered Venture Tracks in Vault:" -ForegroundColor Green
             foreach ($t in $tracks) {
                 Write-Host "  - $($t.Matches[0].Groups[1].Value)" -ForegroundColor White
